@@ -1,0 +1,15 @@
+{
+  "sql_info": {
+    "original_sql": "SELECT * FROM nonexistent_table;",
+    "schema": "public",
+    "extracted_tables": [
+      {
+        "table_name": "nonexistent_table",
+        "schema_name": "public",
+        "alias": null
+      }
+    ],
+    "extracted_columns": {}
+  },
+  "tables": {}
+}
