@@ -16,7 +16,7 @@ from litellm import OpenAI
 load_dotenv()
 
 # Constants
-BASE_URL = "http://localhost:8004/v1"  # Local vLLM server
+BASE_URL = "http://localhost:8004/v1"  # Local vLLM server TODO
 # BASE_URL = "https://ai-green.yasdb.com/compatible-mode/v1"
 MODEL_NAME = "/ssd_data/models/Qwen3-30B-A3B-Instruct-2507-FP8"
 # MODEL_NAME = "deepseek-v4-flash"
@@ -56,18 +56,6 @@ META_STAT_CONTENT = read_file(args.stat) if args.stat else ""
 EXPLAIN_CONTENT = read_file(args.explain) if args.explain else ""
 PROPOSAL_COUNT = 20
 
-# Define file paths
-# DATASET_STAT_MAP = {
-#     "SIFT": "/home/liujianzhong/proposal-source/sift_stat.txt",
-#     "PAPER": "/home/liujianzhong/proposal-source/paper_stat.txt",
-#     "YFCC": "/home/liujianzhong/proposal-source/yfcc_stat.txt",
-#     "GIST": "/home/liujianzhong/proposal-source/gist_stat.txt",
-#     "BIGANN": "/home/liujianzhong/proposal-source/bigann_stat.txt",
-#     "ENRON": "/home/liujianzhong/proposal-source/enron_stat.txt",
-#     "GLOVE": "/home/liujianzhong/proposal-source/glove_stat.txt",
-# }
-# STAT_FILE = DATASET_STAT_MAP.get(args.dataset) if args.dataset else "/home/liujianzhong/proposal-source/stat.txt"
-# STAT_CONTENT = read_file(STAT_FILE)
 
 TEMPLATE_CONTENT = """
 ```json
@@ -491,11 +479,6 @@ def main():
     print(f"[INFO] Base URL: {BASE_URL}")
     print(f"[INFO] Model: {MODEL_NAME}")
     print(f"[INFO] Output file: {OUTPUT_FILE}")
-    # print(f"[INFO] SQL content length: {len(SQL_CONTENT)}")
-    # if args.selectivity is not None:
-    #     print(f"[INFO] Selectivity: {args.selectivity}")
-
-    # print(f"\n[INFO] System prompt: {SYSTEM_PROMPT}")
     # print(f"=" * 60)
 
     # Initialize messages with system prompt
@@ -503,14 +486,6 @@ def main():
     #     {"role": "system", "content": SYSTEM_PROMPT}
     # ]
     messages = []
-
-    # 如果指定了选择率，先插入一条上下文消息
-    # if args.selectivity is not None:
-    #     sel_msg = f"当前数据集选择率: {args.selectivity}（标量条件大约过滤到 {args.selectivity*100:.2f}% 的数据）"
-    #     messages.append({"role": "user", "content": sel_msg})
-
-    # # Replace placeholders in prompts with actual values
-    # processed_prompts = [p.replace("{SQL_CONTENT}", SQL_CONTENT).replace("{STAT_CONTENT}", STAT_CONTENT).replace("{PROPOSAL_COUNT}", PROPOSAL_COUNT) for p in PROMPTS]
 
     # Process each prompt
     for i, prompt in enumerate(PROMPTS):
