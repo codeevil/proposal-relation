@@ -2,237 +2,244 @@
 [
   {
     "proposal_id": 1,
-    "strategy_overview": "修正严重行数估计偏差，强制优化连接顺序与哈希连接，消除嵌套循环性能瓶颈",
+    "strategy_overview": "修正严重行数估计偏差，强制优化连接顺序并启用哈希连接，解决嵌套循环导致的中间结果膨胀问题",
     "core_optimization_points": [
-      "校正date_dim表在2001年的实际行数为122（实际执行结果），修正优化器低估问题",
-      "将date_dim作为最外层驱动表，优先过滤时间维度，减少后续扫描基数",
-      "强制store_sales与date_dim使用IndexOnlyScan，避免全表扫描",
-      "将store_sales与household_demographics之间强制使用HashJoin，替代低效嵌套循环",
-      "强制store与store_sales之间使用HashJoin，避免因小表驱动大表导致的循环膨胀"
+      "校正date_dim表实际行数为122（基于实际执行），修正其在连接链中的估计偏差",
+      "校正store_sales表实际输出行数为56045（每3次循环共168135行），修正其作为中间结果的行数估计",
+      "将连接顺序调整为(date_dim → store_sales → household_demographics) → (store → customer_address) → (customer_demographics)，优先处理高过滤性小结果集",
+      "强制store_sales与household_demographics使用HashJoin，避免嵌套循环扫描1440行内表的73次循环",
+      "强制store与store_sales使用HashJoin，提升大表连接效率"
     ],
-    "hint_combination": "/*+ Rows(date_dim #122) Leading( (date_dim (store_sales (household_demographics store) customer_demographics customer_address)) ) IndexOnlyScan(store_sales) HashJoin(store_sales household_demographics) HashJoin(store_sales store) */",
-    "expected_performance_benefit": "预计执行耗时降低60%-80%，核心收益来自纠正优化器对date_dim行数的严重低估（估计151 vs 实际122），并消除嵌套循环对store_sales的重复扫描（实际934行被循环3次，共2803次内表扫描）"
+    "hint_combination": "/*+ Rows(date_dim *1.0) Rows(store_sales *0.01) Rows(store_sales household_demographics #56045) Leading( (date_dim (store_sales (household_demographics)) (store (customer_address))) (customer_demographics) ) HashJoin(store_sales household_demographics) HashJoin(store store_sales) NoNestLoop(store_sales household_demographics) NoNestLoop(store store_sales) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%，核心收益来自消除嵌套循环对1440行内表的73次重复扫描，同时通过行数校正使优化器正确选择哈希连接路径"
   },
   {
     "proposal_id": 2,
-    "strategy_overview": "通过覆盖索引优化仅索引扫描，彻底消除回表IO，提升扫描效率",
+    "strategy_overview": "强制使用覆盖索引扫描，消除store_sales与date_dim的回表开销，显著降低IO代价",
     "core_optimization_points": [
-      "强制store_sales使用覆盖索引(_dta_index_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4)进行IndexOnlyScan",
-      "确保该索引包含所有查询所需列：ss_sold_date_sk, ss_store_sk, ss_hdemo_sk, ss_cdemo_sk, ss_addr_sk, ss_sales_price, ss_net_profit",
-      "禁止对store_sales进行回表操作，减少随机IO",
-      "对customer_address和customer_demographics启用IndexOnlyScan，避免不必要的回表"
+      "强制store_sales使用覆盖索引_idx_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4进行仅索引扫描",
+      "强制date_dim使用索引_dta_index_date_dim_6_661577395__k1_k7_k9进行仅索引扫描",
+      "避免store_sales与date_dim的任何回表操作，减少随机IO",
+      "提升work_mem至128MB，防止哈希连接内存溢出"
     ],
-    "hint_combination": "/*+ IndexOnlyScan(store_sales _dta_index_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4) IndexOnlyScan(customer_address) IndexOnlyScan(customer_demographics) NoIndexScan(store_sales) */",
-    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自将store_sales的IndexOnlyScan执行从实际569ms降至理论最优，避免13310行被过滤前的回表开销"
+    "hint_combination": "/*+ IndexOnlyScan(store_sales _dta_index_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4) IndexOnlyScan(date_dim _dta_index_date_dim_6_661577395__k1_k7_k9) Set(work_mem '128MB') NoSeqScan(store_sales) NoSeqScan(date_dim) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自完全消除store_sales与date_dim的回表IO，尤其在大表扫描中节省大量随机页读取"
   },
   {
     "proposal_id": 3,
-    "strategy_overview": "重构连接顺序，优先过滤高选择性条件，控制中间结果集膨胀",
+    "strategy_overview": "重构连接顺序，将高选择性过滤表前置，控制中间结果集规模，避免早期膨胀",
     "core_optimization_points": [
-      "将customer_demographics与household_demographics作为前置过滤表，利用其高选择性条件提前缩小结果集",
-      "将ca_country = 'United States' 和 ca_state in (...) 作为customer_address的强过滤条件前置",
-      "强制连接顺序为：date_dim → store_sales → (customer_demographics × household_demographics) → customer_address",
-      "避免将大表store_sales与多个无索引表（如store）过早连接"
+      "将date_dim作为最外层驱动表，利用d_year=2001过滤后仅122行",
+      "将store_sales与date_dim连接后立即过滤ss_sales_price与ss_net_profit范围，大幅减少中间行数",
+      "将customer_demographics与household_demographics合并为一个高选择性子集，提前过滤",
+      "将customer_address与store_sales连接后立即过滤ca_country与ca_state，减少后续连接数据量"
     ],
-    "hint_combination": "/*+ Leading( (date_dim store_sales (customer_demographics household_demographics) customer_address) ) NoNestLoop(store_sales store) NoNestLoop(store_sales customer_address) */",
-    "expected_performance_benefit": "预计降低执行耗时35%-50%，核心收益来自避免store_sales与customer_address之间73行被移除的无效连接，减少嵌套循环的无效迭代"
+    "hint_combination": "/*+ Leading( (date_dim (store_sales (customer_demographics household_demographics)) (customer_address)) (store) ) NoNestLoop(date_dim store_sales) HashJoin(date_dim store_sales) HashJoin(store_sales customer_demographics) HashJoin(store_sales customer_address) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自将122行的date_dim作为驱动表，使后续连接结果集从数万级降至千级以下，避免嵌套循环的指数级开销"
   },
   {
     "proposal_id": 4,
-    "strategy_overview": "强制使用哈希连接替代嵌套循环，解决因估计偏差导致的性能灾难",
+    "strategy_overview": "强制哈希连接替代嵌套循环，解决内表行数大、外层驱动表规模失控的问题",
     "core_optimization_points": [
-      "检测到store_sales与household_demographics之间嵌套循环执行3次，每次扫描6265行，共3×6265=18795次内表扫描",
-      "强制使用HashJoin连接store_sales与household_demographics，避免外层循环扫描",
-      "同时强制HashJoin连接store_sales与customer_demographics，消除嵌套循环",
-      "禁止NestLoop在关键连接路径上使用"
+      "识别store_sales与household_demographics连接中，household_demographics有1440行，而store_sales输出6265行，嵌套循环代价极高",
+      "强制使用HashJoin替代NestLoop，避免1440次内表扫描",
+      "强制store_sales与customer_address使用HashJoin，避免索引扫描中出现0行匹配的无效循环",
+      "禁止嵌套循环连接，强制优化器使用更高效算法"
     ],
-    "hint_combination": "/*+ HashJoin(store_sales household_demographics) HashJoin(store_sales customer_demographics) NoNestLoop(store_sales household_demographics) NoNestLoop(store_sales customer_demographics) */",
-    "expected_performance_benefit": "预计降低执行耗时50%-70%，核心收益来自将嵌套循环的O(n×m)复杂度降为O(n+m)，避免对household_demographics的1440行进行3次重复扫描"
+    "hint_combination": "/*+ HashJoin(store_sales household_demographics) HashJoin(store_sales customer_address) HashJoin(store_sales customer_demographics) NoNestLoop(store_sales household_demographics) NoNestLoop(store_sales customer_address) NoNestLoop(store_sales customer_demographics) */",
+    "expected_performance_benefit": "预计执行耗时降低55%-70%，核心收益来自消除嵌套循环对1440行内表的重复扫描，尤其在store_sales输出6265行的场景下，嵌套循环代价呈线性增长"
   },
   {
     "proposal_id": 5,
-    "strategy_overview": "通过并行扫描加速大表扫描，提升整体吞吐能力",
+    "strategy_overview": "启用并行扫描，提升大表扫描效率，充分利用多核CPU资源",
     "core_optimization_points": [
-      "识别store_sales为大表（实际扫描6265行×3次），但未充分利用并行能力",
-      "强制对store_sales启用并行扫描，设置并行度为4，匹配物理CPU核心数",
-      "对household_demographics启用并行哈希构建，提升哈希表构建效率",
-      "对customer_demographics启用并行索引扫描"
+      "识别store_sales与date_dim扫描为并行可执行操作，当前仅1个worker",
+      "将store_sales表并行度设为4，充分利用多核资源",
+      "将date_dim表并行度设为2，提升小表扫描并行效率",
+      "提升max_parallel_workers_per_gather至8，允许更大并行度"
     ],
-    "hint_combination": "/*+ Parallel(store_sales 4) Parallel(household_demographics 4) Parallel(customer_demographics 4) ParallelAppend(on) */",
-    "expected_performance_benefit": "预计降低执行耗时25%-40%，核心收益来自将store_sales的扫描时间从569ms压缩至约150ms，显著减少整体执行时间"
+    "hint_combination": "/*+ Parallel(store_sales 4) Parallel(date_dim 2) Set(max_parallel_workers_per_gather 8) ParallelAppend(on) */",
+    "expected_performance_benefit": "预计执行耗时降低30%-45%，核心收益来自并行扫描加速大表数据读取，尤其在store_sales表扫描中实现4倍并行加速"
   },
   {
     "proposal_id": 6,
-    "strategy_overview": "优化连接方法与扫描路径，使用合并连接复用排序结果，减少排序开销",
+    "strategy_overview": "通过Rows Hint校正严重估计偏差，使优化器正确选择哈希连接路径",
     "core_optimization_points": [
-      "识别store_sales与store之间为等值连接，且store表较小（102行），可复用排序",
-      "强制使用MergeJoin连接store_sales与store，复用索引顺序",
-      "对store_sales的ss_sold_date_sk使用有序索引扫描，避免额外排序",
-      "禁止HashJoin在小表连接上使用，避免不必要的哈希构建"
+      "校正date_dim的Plan Rows为122（实际值），避免优化器误判为151导致连接顺序错误",
+      "校正store_sales的Plan Rows为6265（实际值），避免低估导致嵌套循环选择错误",
+      "校正household_demographics的Plan Rows为1440（实际值），避免高估导致哈希连接被忽略",
+      "校正customer_demographics的Plan Rows为100（实际值），避免高估导致连接方法选择不当"
     ],
-    "hint_combination": "/*+ MergeJoin(store_sales store) NoHashJoin(store_sales store) IndexScan(store_sales _dta_index_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4) */",
-    "expected_performance_benefit": "预计降低执行耗时20%-35%，核心收益来自避免哈希连接的CPU开销，复用索引的有序性，减少总代价"
+    "hint_combination": "/*+ Rows(date_dim #122) Rows(store_sales #6265) Rows(household_demographics #1440) Rows(customer_demographics #100) */",
+    "expected_performance_benefit": "预计执行耗时降低45%-60%，核心收益来自修正优化器对各表行数的严重误判，使连接顺序与连接方法选择回归合理路径"
   },
   {
     "proposal_id": 7,
-    "strategy_overview": "校正优化器对连接结果集的严重估计偏差，强制指定中间结果行数",
+    "strategy_overview": "优化过滤条件顺序，提前应用高选择性条件，减少中间结果集",
     "core_optimization_points": [
-      "优化器估计store_sales与household_demographics连接后行数为490，实际为6265，偏差超过12倍",
-      "校正该连接结果集行数为6265，避免优化器误判为小表",
-      "基于实际执行结果，校正连接后中间结果集规模",
-      "避免因低估导致选择嵌套循环而非哈希连接"
+      "将d_year=2001的过滤条件前置，作为date_dim的索引扫描条件",
+      "将ss_sales_price范围过滤提前至store_sales扫描阶段，减少无效数据流入",
+      "将ss_net_profit范围过滤提前至store_sales扫描阶段，减少后续连接数据量",
+      "将ca_country='United States'与ca_state in(...)合并为单个过滤条件，减少重复扫描"
     ],
-    "hint_combination": "/*+ Rows(store_sales household_demographics #6265) Rows(store_sales #6265) */",
-    "expected_performance_benefit": "预计降低执行耗时45%-60%，核心收益来自纠正优化器对中间结果集的严重误判，强制选择哈希连接而非嵌套循环"
+    "hint_combination": "/*+ NoSeqScan(store_sales) IndexOnlyScan(store_sales _dta_index_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4) Set(enable_seqscan off) */",
+    "expected_performance_benefit": "预计执行耗时降低35%-50%，核心收益来自提前过滤，使store_sales扫描阶段即减少90%以上无效数据，降低后续连接压力"
   },
   {
     "proposal_id": 8,
-    "strategy_overview": "启用位图扫描优化多条件组合过滤，减少随机IO与索引扫描次数",
+    "strategy_overview": "强制使用合并连接，复用索引排序结果，避免额外排序开销",
     "core_optimization_points": [
-      "识别store_sales的过滤条件为多个范围与IN组合，适合位图扫描",
-      "强制对store_sales使用BitmapScan，结合多个索引条件",
-      "避免因条件组合导致的索引扫描重复回表",
-      "使用位图合并提升过滤效率"
+      "识别store_sales与store连接基于ss_store_sk，该字段在索引中有序",
+      "强制使用MergeJoin复用索引排序，避免哈希连接的构建与探测开销",
+      "识别customer_demographics与store_sales连接基于cd_demo_sk，该字段在索引中有序",
+      "强制使用MergeJoin，避免嵌套循环扫描"
     ],
-    "hint_combination": "/*+ BitmapScan(store_sales _dta_index_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4) */",
-    "expected_performance_benefit": "预计降低执行耗时25%-40%，核心收益来自将多个索引条件合并为位图，减少随机IO次数，提升扫描效率"
+    "hint_combination": "/*+ MergeJoin(store_sales store) MergeJoin(store_sales customer_demographics) NoHashJoin(store_sales store) NoNestLoop(store_sales customer_demographics) */",
+    "expected_performance_benefit": "预计执行耗时降低30%-40%，核心收益来自复用索引排序，避免哈希连接的CPU与内存开销，尤其在大表连接中优势明显"
   },
   {
     "proposal_id": 9,
-    "strategy_overview": "强制使用Memoize缓存，避免对小表的重复扫描",
+    "strategy_overview": "禁用不必要的并行，避免小表并行开销，优化并行资源分配",
     "core_optimization_points": [
-      "识别household_demographics为小表（1440行），在嵌套循环中被重复扫描3次",
-      "启用Memoize缓存，将household_demographics的扫描结果缓存",
-      "避免对同一小表进行多次全表扫描",
-      "减少CPU与IO开销"
+      "识别customer_demographics与household_demographics为小表（<1000行），并行无收益",
+      "禁用customer_demographics与household_demographics的并行扫描",
+      "禁用store的并行扫描，避免小表并行启动开销",
+      "保留store_sales与date_dim的并行，提升大表处理效率"
     ],
-    "hint_combination": "/*+ Memoize(household_demographics) */",
-    "expected_performance_benefit": "预计降低执行耗时15%-25%，核心收益来自避免对household_demographics的3次全表扫描，仅扫描一次即可"
+    "hint_combination": "/*+ NoParallel(customer_demographics) NoParallel(household_demographics) NoParallel(store) Parallel(store_sales 4) Parallel(date_dim 2) */",
+    "expected_performance_benefit": "预计执行耗时降低20%-35%，核心收益来自避免小表并行带来的启动开销，使并行资源集中于真正受益的大表扫描"
   },
   {
     "proposal_id": 10,
-    "strategy_overview": "调整代价模型参数，匹配SSD存储环境，提升优化器决策准确性",
+    "strategy_overview": "使用位图扫描优化多条件组合过滤，减少随机IO与重复访问",
     "core_optimization_points": [
-      "当前random_page_cost=4.0，适用于传统HDD，但实际为SSD环境",
-      "将random_page_cost下调至1.1，反映SSD随机读性能",
-      "调整cpu_tuple_cost为0.008，更贴近真实CPU消耗",
-      "提升work_mem以减少磁盘排序"
+      "识别ss_sales_price与ss_net_profit存在多范围组合条件，适合位图扫描",
+      "强制store_sales使用BitmapScan进行多条件过滤",
+      "避免索引扫描中因条件复杂导致的重复回表",
+      "提升work_mem至64MB，防止位图扫描内存溢出"
     ],
-    "hint_combination": "/*+ Set(random_page_cost 1.1) Set(cpu_tuple_cost 0.008) Set(work_mem '64MB') */",
-    "expected_performance_benefit": "预计降低执行耗时20%-30%，核心收益来自优化器更准确地评估索引扫描代价，避免错误选择顺序扫描"
+    "hint_combination": "/*+ BitmapScan(store_sales) Set(work_mem '64MB') NoIndexScan(store_sales) */",
+    "expected_performance_benefit": "预计执行耗时降低25%-40%，核心收益来自位图扫描批量回表，减少随机IO次数，尤其在多条件组合过滤中表现优异"
   },
   {
     "proposal_id": 11,
-    "strategy_overview": "强制物化中间结果，避免重复计算与多次扫描",
+    "strategy_overview": "强制物化中间结果，避免重复扫描与计算，提升执行稳定性",
     "core_optimization_points": [
-      "识别store_sales与date_dim连接结果在多个路径中重复使用",
-      "强制对store_sales与date_dim连接结果进行物化",
-      "避免重复扫描date_dim与store_sales",
-      "提升后续连接效率"
+      "识别store_sales与date_dim连接结果被多次使用（3次循环）",
+      "强制物化该中间结果，避免重复扫描",
+      "识别household_demographics与customer_demographics为小表，可物化",
+      "提升work_mem至128MB，支持物化操作"
     ],
-    "hint_combination": "/*+ Materialize(store_sales date_dim) */",
-    "expected_performance_benefit": "预计降低执行耗时15%-25%，核心收益来自避免对date_dim的3次扫描与store_sales的3次连接"
+    "hint_combination": "/*+ Materialize(store_sales date_dim) Materialize(household_demographics) Materialize(customer_demographics) Set(work_mem '128MB') */",
+    "expected_performance_benefit": "预计执行耗时降低20%-30%，核心收益来自避免重复扫描与计算，尤其在多循环执行中表现显著"
   },
   {
     "proposal_id": 12,
-    "strategy_overview": "禁止并行扫描小表，避免并行开销大于收益",
+    "strategy_overview": "调整代价模型参数，匹配SSD存储特性，提升哈希连接与索引扫描效率",
     "core_optimization_points": [
-      "识别store表仅102行，却启用了并行扫描（Workers Launched: 2）",
-      "禁止store表的并行扫描，避免进程启动开销",
-      "对小表使用单线程扫描，提升效率"
+      "将random_page_cost从4.0降至1.1，匹配SSD随机读性能",
+      "将cpu_tuple_cost从0.01降至0.005，提升CPU处理效率",
+      "提升effective_cache_size至32GB，提升缓存命中率",
+      "降低parallel_setup_cost，提升并行启动效率"
     ],
-    "hint_combination": "/*+ NoParallel(store) */",
-    "expected_performance_benefit": "预计降低执行耗时5%-10%，核心收益来自消除store表的并行启动开销，避免不必要的进程调度"
+    "hint_combination": "/*+ Set(random_page_cost 1.1) Set(cpu_tuple_cost 0.005) Set(effective_cache_size 32GB) Set(parallel_setup_cost 0.1) */",
+    "expected_performance_benefit": "预计执行耗时降低25%-40%，核心收益来自更真实反映SSD性能的代价模型，使优化器更倾向选择哈希连接与索引扫描"
   },
   {
     "proposal_id": 13,
-    "strategy_overview": "优化过滤条件顺序，尽早过滤，减少中间结果集",
+    "strategy_overview": "强制使用Memoize缓存，避免嵌套循环中内表重复扫描",
     "core_optimization_points": [
-      "将d_year = 2001的过滤条件前置，优先筛选date_dim",
-      "将ca_country = 'United States'与ca_state in(...)前置，减少customer_address扫描基数",
-      "将cd_marital_status = 'S'等高选择性条件前置，避免无效连接"
+      "识别customer_demographics与store_sales连接中，内表被多次扫描",
+      "启用Memoize缓存，避免重复扫描",
+      "识别household_demographics为小表，可缓存",
+      "提升work_mem至128MB，支持缓存"
     ],
-    "hint_combination": "/*+ Leading( (date_dim (customer_demographics household_demographics) (customer_address store_sales) store) ) */",
-    "expected_performance_benefit": "预计降低执行耗时10%-20%，核心收益来自尽早过滤，减少后续连接的无效行数"
+    "hint_combination": "/*+ Memoize(customer_demographics) Memoize(household_demographics) Set(work_mem '128MB') */",
+    "expected_performance_benefit": "预计执行耗时降低20%-35%，核心收益来自避免内表重复扫描，尤其在嵌套循环中节省大量CPU与IO开销"
   },
   {
     "proposal_id": 14,
-    "strategy_overview": "强制使用覆盖索引扫描，避免回表并提升并行扫描效率",
+    "strategy_overview": "优化连接方法组合，强制哈希连接与合并连接混合使用，提升大表连接效率",
     "core_optimization_points": [
-      "确认_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4为覆盖索引",
-      "强制使用IndexOnlyScan，避免回表",
-      "提升并行扫描效率，减少IO"
+      "对store_sales与household_demographics使用HashJoin，处理大表连接",
+      "对store_sales与store使用MergeJoin，复用索引排序",
+      "对store_sales与customer_demographics使用HashJoin，避免嵌套循环",
+      "避免嵌套循环连接，强制使用更高效方法"
     ],
-    "hint_combination": "/*+ IndexOnlyScan(store_sales _dta_index_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4) */",
-    "expected_performance_benefit": "预计降低执行耗时25%-40%，核心收益来自避免13310行回表，提升扫描吞吐"
+    "hint_combination": "/*+ HashJoin(store_sales household_demographics) MergeJoin(store_sales store) HashJoin(store_sales customer_demographics) NoNestLoop(store_sales household_demographics) NoNestLoop(store_sales store) NoNestLoop(store_sales customer_demographics) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自混合使用哈希与合并连接，充分发挥不同连接方法的优势"
   },
   {
     "proposal_id": 15,
-    "strategy_overview": "通过Set参数调整并行策略，避免并行度不足",
+    "strategy_overview": "通过Set Hint临时提升work_mem，防止哈希连接与排序溢出到磁盘",
     "core_optimization_points": [
-      "当前max_parallel_workers_per_gather未设置，可能限制并行度",
-      "设置max_parallel_workers_per_gather为8，提升并行能力",
-      "提升并行聚合效率"
+      "识别哈希连接中Hash Buckets=2048，Batches=1，但内存使用73kB，可能溢出",
+      "提升work_mem至256MB，确保哈希连接在内存中完成",
+      "提升maintenance_work_mem至512MB，支持大操作",
+      "避免磁盘溢出导致性能骤降"
     ],
-    "hint_combination": "/*+ Set(max_parallel_workers_per_gather 8) */",
-    "expected_performance_benefit": "预计降低执行耗时15%-25%，核心收益来自提升并行扫描与聚合的并行度"
+    "hint_combination": "/*+ Set(work_mem '256MB') Set(maintenance_work_mem '512MB') */",
+    "expected_performance_benefit": "预计执行耗时降低30%-50%，核心收益来自避免哈希连接与排序的磁盘溢出，确保所有操作在内存中完成"
   },
   {
     "proposal_id": 16,
-    "strategy_overview": "强制使用哈希连接并提升哈希表内存，避免磁盘溢出",
+    "strategy_overview": "强制索引扫描替代顺序扫描，提升小表过滤效率",
     "core_optimization_points": [
-      "识别household_demographics哈希表大小为1440行，可能溢出磁盘",
-      "强制使用HashJoin并提升work_mem",
-      "避免哈希表磁盘溢出"
+      "识别household_demographics与customer_demographics为小表，但使用Seq Scan",
+      "强制使用IndexScan替代Seq Scan",
+      "避免小表全表扫描带来的IO开销",
+      "提升cpu_index_tuple_cost以反映索引扫描代价"
     ],
-    "hint_combination": "/*+ HashJoin(store_sales household_demographics) Set(work_mem '128MB') */",
-    "expected_performance_benefit": "预计降低执行耗时20%-35%，核心收益来自避免哈希表磁盘溢出，提升哈希连接效率"
+    "hint_combination": "/*+ IndexScan(household_demographics) IndexScan(customer_demographics) Set(cpu_index_tuple_cost 0.005) */",
+    "expected_performance_benefit": "预计执行耗时降低15%-25%，核心收益来自避免小表顺序扫描，尤其在高选择性过滤中效率更高"
   },
   {
     "proposal_id": 17,
-    "strategy_overview": "优化连接顺序，将小表聚合成组，再与大表连接",
+    "strategy_overview": "重构连接条件，将OR条件拆分为子查询，提升优化器选择能力",
     "core_optimization_points": [
-      "将customer_demographics与household_demographics先连接，形成小结果集",
-      "再与store_sales连接，避免大表与多个小表逐个连接",
-      "提升连接效率"
+      "识别OR条件导致连接树复杂，优化器难以估计",
+      "将三个OR条件拆分为三个子查询，分别连接后UNION",
+      "每个子查询独立优化，避免全局估计偏差",
+      "提升并行度以加速子查询执行"
     ],
-    "hint_combination": "/*+ Leading( (date_dim (customer_demographics household_demographics) store_sales customer_address store) ) */",
-    "expected_performance_benefit": "预计降低执行耗时20%-30%，核心收益来自减少连接树深度，避免中间结果膨胀"
+    "hint_combination": "/*+ ParallelAppend(on) Set(enable_hashjoin on) Set(enable_nestloop on) Set(enable_mergejoin on) */",
+    "expected_performance_benefit": "预计执行耗时降低20%-35%，核心收益来自拆分复杂OR条件，使优化器能独立优化每个分支，避免全局估计偏差"
   },
   {
     "proposal_id": 18,
-    "strategy_overview": "强制使用MergeJoin复用索引排序，避免重复排序",
+    "strategy_overview": "强制使用索引扫描并提升索引选择性，减少无效扫描",
     "core_optimization_points": [
-      "识别store_sales的索引已按ss_sold_date_sk排序",
-      "强制使用MergeJoin连接store_sales与date_dim，复用排序",
-      "避免额外排序开销"
+      "识别store_sales索引包含ss_sold_date_sk、ss_store_sk等关键字段",
+      "强制使用该索引进行扫描，避免全表扫描",
+      "提升cpu_index_tuple_cost以反映索引扫描代价",
+      "避免不必要的回表"
     ],
-    "hint_combination": "/*+ MergeJoin(store_sales date_dim) */",
-    "expected_performance_benefit": "预计降低执行耗时10%-20%，核心收益来自避免对date_dim的排序"
+    "hint_combination": "/*+ IndexScan(store_sales _dta_index_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4) Set(cpu_index_tuple_cost 0.005) */",
+    "expected_performance_benefit": "预计执行耗时降低25%-40%，核心收益来自强制使用最优索引，避免全表扫描与无效回表"
   },
   {
     "proposal_id": 19,
-    "strategy_overview": "禁止对小表使用索引扫描，避免索引扫描开销大于顺序扫描",
+    "strategy_overview": "禁用嵌套循环，强制使用哈希连接，解决性能瓶颈",
     "core_optimization_points": [
-      "识别customer_demographics仅102行，使用索引扫描开销高于顺序扫描",
-      "禁止其使用索引扫描，强制使用顺序扫描",
-      "提升小表扫描效率"
+      "识别嵌套循环连接为性能瓶颈，实际执行时间占比高",
+      "强制禁用NestLoop，强制使用HashJoin",
+      "提升并行度以加速哈希连接",
+      "提升work_mem以支持大哈希表"
     ],
-    "hint_combination": "/*+ NoIndexScan(customer_demographics) SeqScan(customer_demographics) */",
-    "expected_performance_benefit": "预计降低执行耗时5%-10%，核心收益来自避免小表索引扫描的CPU开销"
+    "hint_combination": "/*+ NoNestLoop(store_sales household_demographics) NoNestLoop(store_sales customer_address) NoNestLoop(store_sales customer_demographics) HashJoin(store_sales household_demographics) HashJoin(store_sales customer_address) HashJoin(store_sales customer_demographics) Set(work_mem '256MB') Parallel(store_sales 4) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-70%，核心收益来自彻底消除嵌套循环的低效行为，尤其在大表连接中优势显著"
   },
   {
     "proposal_id": 20,
-    "strategy_overview": "通过Rows Hint强制校正所有关键节点的行数估计，提升优化器准确性",
+    "strategy_overview": "综合优化：行数校正 + 连接顺序调整 + 并行控制 + 扫描方法强制，实现全面性能提升",
     "core_optimization_points": [
-      "校正date_dim行数为122",
-      "校正store_sales行数为6265",
-      "校正household_demographics行数为1440",
-      "校正customer_address行数为102",
-      "全面修正估计偏差"
+      "校正date_dim、store_sales、household_demographics、customer_demographics的行数估计",
+      "调整连接顺序为(date_dim → store_sales) → (household_demographics → customer_demographics) → (store → customer_address)",
+      "强制使用HashJoin与IndexOnlyScan",
+      "提升并行度至4，提升work_mem至256MB"
     ],
-    "hint_combination": "/*+ Rows(date_dim #122) Rows(store_sales #6265) Rows(household_demographics #1440) Rows(customer_address #102) */",
-    "expected_performance_benefit": "预计降低执行耗时50%-70%，核心收益来自全面校正优化器估计偏差，使其选择最优执行路径"
+    "hint_combination": "/*+ Rows(date_dim #122) Rows(store_sales #6265) Rows(household_demographics #1440) Rows(customer_demographics #100) Leading( (date_dim (store_sales)) (household_demographics (customer_demographics)) (store (customer_address)) ) HashJoin(store_sales household_demographics) HashJoin(store_sales customer_demographics) HashJoin(store store_sales) IndexOnlyScan(store_sales _dta_index_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4) IndexOnlyScan(date_dim _dta_index_date_dim_6_661577395__k1_k7_k9) Parallel(store_sales 4) Set(work_mem '256MB') */",
+    "expected_performance_benefit": "预计执行耗时降低65%-85%，核心收益来自多维度协同优化，彻底解决行数估计偏差、连接顺序错误、扫描方法不当与并行不足问题"
   }
 ]
 ```

@@ -498,25 +498,59 @@ def gen_explain(sql_path: Path, opts: DbOptions, output_path: Path = None) -> Pa
     return output_path
 
 
+def _run_psql_with_capture(sql: str, opts: DbOptions):
+    """Run psql and return (returncode, stdout, stderr). Does not exit on error."""
+    result = subprocess.run(
+        [PSQL_BIN, "-h", opts.host, "-p", str(opts.port), "-U", opts.user, "-d", opts.database,
+         "-X", "-A", "-t", "-q", "--no-psqlrc", "-v", "ON_ERROR_STOP=1"],
+        input=sql,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return result.returncode, result.stdout, result.stderr
+
+
 def run_one_proposal(proposal_id: int, label: str, hint: str, sql_content: str, opts: DbOptions):
     """Execute a single proposal (optional hint + SQL) and measure elapsed time in ms."""
     sql_to_run = f"{hint}\n{sql_content}" if hint else sql_content
     start = time.perf_counter()
-    try:
-        run_psql(sql_to_run, db=opts.database, host=opts.host, port=opts.port,
-                 user=opts.user, raise_on_error=True)
-        elapsed_ms = (time.perf_counter() - start) * 1000.0
-        status = "ok"
-    except RuntimeError as e:
-        elapsed_ms = (time.perf_counter() - start) * 1000.0
-        status = "error"
-        logger.warning(f"Proposal {label} failed: {e}")
+    rc, _stdout, stderr = _run_psql_with_capture(sql_to_run, opts)
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+
+    if rc == 0:
+        # pg_hint_plan emits hint syntax errors as INFO (not ERROR) and does not
+        # change the exit code. Detect these and flag them separately.
+        stderr_clean = stderr.strip() if stderr else ""
+        hint_error_lines = [line for line in stderr_clean.splitlines()
+                            if "pg_hint_plan" in line and ("hint syntax error" in line.lower()
+                                                          or "syntax error" in line.lower())]
+        if hint_error_lines:
+            status = "hint_error"
+            error_msg = " | ".join(hint_error_lines)
+            print(f"[HINT_ERROR] {label}: {error_msg}", file=sys.stderr)
+        else:
+            status = "ok"
+            error_msg = ""
+    else:
+        stderr_clean = stderr.strip() if stderr else ""
+        first_error = ""
+        for line in stderr_clean.splitlines():
+            if line.startswith("ERROR:"):
+                first_error = line[len("ERROR:"):].strip()
+                break
+        is_hint_error = "hint syntax error" in stderr_clean.lower()
+        status = "hint_error" if is_hint_error else "error"
+        error_msg = first_error or (stderr_clean.splitlines()[0] if stderr_clean else f"psql exit {rc}")
+        print(f"[{status.upper()}] {label}: {error_msg}", file=sys.stderr)
+
     return {
         "proposal_id": proposal_id,
         "label": label,
         "hint": hint,
         "elapsed_ms": elapsed_ms,
         "status": status,
+        "error_msg": error_msg,
     }
 
 
@@ -527,16 +561,26 @@ def _print_results_table(results):
             baseline_ms = r["elapsed_ms"]
             break
 
-    headers = ["Proposal ID", "Label", "Elapsed (ms)", "Speedup", "Status"]
+    headers = ["Proposal ID", "Label", "Elapsed (ms)", "Speedup", "Status", "Error"]
     rows = []
     for r in results:
         if r["status"] == "ok":
             elapsed = f"{r['elapsed_ms']:.2f}"
             speedup = f"{baseline_ms / r['elapsed_ms']:.2f}x" if baseline_ms else "N/A"
+            err = ""
+        elif r["status"] == "hint_error":
+            elapsed = f"{r['elapsed_ms']:.2f}"
+            speedup = f"{baseline_ms / r['elapsed_ms']:.2f}x" if baseline_ms else "N/A"
+            err = r.get("error_msg", "")
+            if len(err) > 60:
+                err = err[:57] + "..."
         else:
             elapsed = "error"
             speedup = "N/A"
-        rows.append([str(r["proposal_id"]), r["label"], elapsed, speedup, r["status"]])
+            err = r.get("error_msg", "")
+            if len(err) > 60:
+                err = err[:57] + "..."
+        rows.append([str(r["proposal_id"]), r["label"], elapsed, speedup, r["status"], err])
 
     widths = [max(len(str(row[i])) for row in [headers] + rows) for i in range(len(headers))]
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
