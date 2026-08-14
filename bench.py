@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import sqlglot
@@ -22,9 +23,10 @@ PSQL_BIN = "/home/liujianzhong/postgresql-15.5/bin/psql"
 DATA_DIR = Path("./data")
 
 
-def run_psql(sql: str, db: str = PGDATABASE):
+def run_psql(sql: str, db: str = PGDATABASE, host: str = PGHOST,
+             port: int = PGPORT, user: str = PGUSER, raise_on_error: bool = False):
     result = subprocess.run(
-        [PSQL_BIN, "-h", PGHOST, "-p", str(PGPORT), "-U", PGUSER, "-d", db,
+        [PSQL_BIN, "-h", host, "-p", str(port), "-U", user, "-d", db,
          "-X", "-A", "-t", "-q", "--no-psqlrc"],
         input=sql,
         capture_output=True,
@@ -32,7 +34,10 @@ def run_psql(sql: str, db: str = PGDATABASE):
         encoding="utf-8",
     )
     if result.returncode != 0:
-        print(f"[ERROR] psql failed: {result.stderr.strip()}", file=sys.stderr)
+        msg = f"psql failed: {result.stderr.strip()}"
+        if raise_on_error:
+            raise RuntimeError(msg)
+        print(f"[ERROR] {msg}", file=sys.stderr)
         sys.exit(1)
     return result.stdout
 
@@ -459,12 +464,110 @@ def cmd_gen_explain(args):
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    explain_output = run_psql(f"EXPLAIN ANALYZE {sql_content}", db=args.database)
+    explain_output = run_psql(f"EXPLAIN ANALYZE {sql_content}", db=args.database,
+                              host=args.host, port=args.port, user=args.user)
 
     output_path = Path(args.output) if args.output else DATA_DIR / f"{sql_path.stem}_explain.txt"
     output_path.write_text(explain_output, encoding="utf-8")
 
     print(f"[INFO] EXPLAIN ANALYZE written to: {output_path}")
+
+
+def run_one_proposal(proposal_id: int, label: str, hint: str, sql_content: str, args):
+    """Execute a single proposal (optional hint + SQL) and measure elapsed time in ms."""
+    sql_to_run = f"{hint}\n{sql_content}" if hint else sql_content
+    start = time.perf_counter()
+    try:
+        run_psql(sql_to_run, db=args.database, host=args.host, port=args.port,
+                 user=args.user, raise_on_error=True)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        status = "ok"
+    except RuntimeError as e:
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        status = "error"
+        logger.warning(f"Proposal {label} failed: {e}")
+    return {
+        "proposal_id": proposal_id,
+        "label": label,
+        "hint": hint,
+        "elapsed_ms": elapsed_ms,
+        "status": status,
+    }
+
+
+def _print_results_table(results):
+    baseline_ms = None
+    for r in results:
+        if r["label"] == "baseline" and r["status"] == "ok":
+            baseline_ms = r["elapsed_ms"]
+            break
+
+    headers = ["Proposal ID", "Label", "Elapsed (ms)", "Speedup", "Status"]
+    rows = []
+    for r in results:
+        if r["status"] == "ok":
+            elapsed = f"{r['elapsed_ms']:.2f}"
+            speedup = f"{baseline_ms / r['elapsed_ms']:.2f}x" if baseline_ms else "N/A"
+        else:
+            elapsed = "error"
+            speedup = "N/A"
+        rows.append([str(r["proposal_id"]), r["label"], elapsed, speedup, r["status"]])
+
+    widths = [max(len(str(row[i])) for row in [headers] + rows) for i in range(len(headers))]
+    fmt = "  ".join(f"{{:<{w}}}" for w in widths)
+    sep = "  ".join("-" * w for w in widths)
+    print()
+    print(fmt.format(*headers))
+    print(sep)
+    for row in rows:
+        print(fmt.format(*row))
+    print()
+
+
+def _strip_markdown_fence(text: str) -> str:
+    text = text.strip()
+    if text.startswith("```"):
+        first_newline = text.find("\n")
+        if first_newline != -1:
+            text = text[first_newline + 1:]
+    if text.endswith("```"):
+        text = text[:-3].rstrip()
+    return text.strip()
+
+
+def cmd_run_proposals(args):
+    sql_path = Path(args.sql)
+    if not sql_path.exists():
+        print(f"[ERROR] SQL file not found: {sql_path}", file=sys.stderr)
+        sys.exit(1)
+    sql_content = sql_path.read_text(encoding="utf-8").strip()
+    if not sql_content:
+        print(f"[ERROR] SQL file is empty: {sql_path}", file=sys.stderr)
+        sys.exit(1)
+
+    proposals_path = Path(args.proposals) if args.proposals else DATA_DIR / f"{sql_path.stem}_proposals.json"
+    if not proposals_path.exists():
+        print(f"[ERROR] Proposals file not found: {proposals_path}", file=sys.stderr)
+        sys.exit(1)
+    proposals = json.loads(_strip_markdown_fence(proposals_path.read_text(encoding="utf-8")))
+    if not isinstance(proposals, list):
+        print(f"[ERROR] Proposals file must be a JSON array", file=sys.stderr)
+        sys.exit(1)
+
+    results = []
+
+    logger.info("Running baseline (no hint)...")
+    results.append(run_one_proposal(0, "baseline", "", sql_content, args))
+
+    for p in proposals:
+        pid = p.get("proposal_id")
+        hint = p.get("hint_combination") or ""
+        label = f"proposal_{pid}"
+        logger.info(f"Running {label}...")
+        results.append(run_one_proposal(pid, label, hint, sql_content, args))
+        time.sleep(args.sleep)
+
+    _print_results_table(results)
 
 
 def cmd_gen_stat(args):
@@ -517,6 +620,19 @@ def main():
     p_gen_stat.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
     p_gen_stat.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
     p_gen_stat.set_defaults(func=cmd_gen_stat)
+
+    # run_proposals
+    p_run_proposals = subparsers.add_parser("run_proposals", help="Run proposals and benchmark execution time")
+    p_run_proposals.add_argument("--sql", type=str, required=True, help="Path to SQL file")
+    p_run_proposals.add_argument("--proposals", type=str, default=None,
+                                 help="Path to proposals JSON file (default: ./data/{sql_stem}_proposals.json)")
+    p_run_proposals.add_argument("--sleep", type=float, default=3.0,
+                                 help="Seconds to sleep between proposals (default: 3.0)")
+    p_run_proposals.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
+    p_run_proposals.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
+    p_run_proposals.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
+    p_run_proposals.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
+    p_run_proposals.set_defaults(func=cmd_run_proposals)
 
     args = parser.parse_args()
     args.func(args)
