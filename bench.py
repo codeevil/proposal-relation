@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import time
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import sqlglot
@@ -21,6 +22,16 @@ PGDATABASE = "postgres"
 PSQL_BIN = "/home/liujianzhong/postgresql-15.5/bin/psql"
 
 DATA_DIR = Path("./data")
+PROPOSAL_PG_SCRIPT = Path(__file__).resolve().parent / "proposal_pg.py"
+
+
+@dataclass
+class DbOptions:
+    host: str = PGHOST
+    port: int = PGPORT
+    user: str = PGUSER
+    database: str = PGDATABASE
+    sleep: float = 3.0
 
 
 def run_psql(sql: str, db: str = PGDATABASE, host: str = PGHOST,
@@ -473,13 +484,27 @@ def cmd_gen_explain(args):
     print(f"[INFO] EXPLAIN ANALYZE written to: {output_path}")
 
 
-def run_one_proposal(proposal_id: int, label: str, hint: str, sql_content: str, args):
+def gen_explain(sql_path: Path, opts: DbOptions, output_path: Path = None) -> Path:
+    """Generate EXPLAIN ANALYZE output file for a SQL file. Returns output path."""
+    sql_content = sql_path.read_text(encoding="utf-8").strip()
+    explain_output = run_psql(f"EXPLAIN ANALYZE {sql_content}", db=opts.database,
+                              host=opts.host, port=opts.port, user=opts.user)
+
+    output_path = output_path or DATA_DIR / f"{sql_path.stem}_explain.txt"
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(explain_output, encoding="utf-8")
+    logger.info(f"[INFO] EXPLAIN ANALYZE written to: {output_path}")
+    return output_path
+
+
+def run_one_proposal(proposal_id: int, label: str, hint: str, sql_content: str, opts: DbOptions):
     """Execute a single proposal (optional hint + SQL) and measure elapsed time in ms."""
     sql_to_run = f"{hint}\n{sql_content}" if hint else sql_content
     start = time.perf_counter()
     try:
-        run_psql(sql_to_run, db=args.database, host=args.host, port=args.port,
-                 user=args.user, raise_on_error=True)
+        run_psql(sql_to_run, db=opts.database, host=opts.host, port=opts.port,
+                 user=opts.user, raise_on_error=True)
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         status = "ok"
     except RuntimeError as e:
@@ -535,17 +560,12 @@ def _strip_markdown_fence(text: str) -> str:
     return text.strip()
 
 
-def cmd_run_proposals(args):
-    sql_path = Path(args.sql)
-    if not sql_path.exists():
-        print(f"[ERROR] SQL file not found: {sql_path}", file=sys.stderr)
-        sys.exit(1)
+def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None):
+    """Execute baseline + each proposal in the proposals file, print timing table. Returns results."""
     sql_content = sql_path.read_text(encoding="utf-8").strip()
-    if not sql_content:
-        print(f"[ERROR] SQL file is empty: {sql_path}", file=sys.stderr)
-        sys.exit(1)
 
-    proposals_path = Path(args.proposals) if args.proposals else DATA_DIR / f"{sql_path.stem}_proposals.json"
+    proposals_path = proposals_path or DATA_DIR / f"{sql_path.stem}_proposals.json"
+    proposals_path = Path(proposals_path)
     if not proposals_path.exists():
         print(f"[ERROR] Proposals file not found: {proposals_path}", file=sys.stderr)
         sys.exit(1)
@@ -557,17 +577,46 @@ def cmd_run_proposals(args):
     results = []
 
     logger.info("Running baseline (no hint)...")
-    results.append(run_one_proposal(0, "baseline", "", sql_content, args))
+    results.append(run_one_proposal(0, "baseline", "", sql_content, opts))
 
     for p in proposals:
         pid = p.get("proposal_id")
         hint = p.get("hint_combination") or ""
         label = f"proposal_{pid}"
         logger.info(f"Running {label}...")
-        results.append(run_one_proposal(pid, label, hint, sql_content, args))
-        time.sleep(args.sleep)
+        results.append(run_one_proposal(pid, label, hint, sql_content, opts))
+        time.sleep(opts.sleep)
 
     _print_results_table(results)
+    return results
+
+
+def cmd_run_proposals(args):
+    sql_path = Path(args.sql)
+    if not sql_path.exists():
+        print(f"[ERROR] SQL file not found: {sql_path}", file=sys.stderr)
+        sys.exit(1)
+    opts = DbOptions(host=args.host, port=args.port, user=args.user,
+                     database=args.database, sleep=args.sleep)
+    run_proposals(sql_path, opts, proposals_path=args.proposals)
+
+
+def gen_stat(sql_path: Path, opts: DbOptions, output_path: Path = None) -> Path:
+    """Generate metadata & statistics JSON for a SQL file. Returns output path."""
+    sql_content = sql_path.read_text(encoding="utf-8").strip()
+
+    output_path = output_path or DATA_DIR / f"{sql_path.stem}_stat.json"
+    output_path = Path(output_path)
+
+    collector = PgMetadataCollector(
+        host=opts.host, port=opts.port, user=opts.user, dbname=opts.database,
+    )
+    try:
+        collector.collect_all(sql_content)
+        collector.export_json(str(output_path))
+    finally:
+        collector.close()
+    return output_path
 
 
 def cmd_gen_stat(args):
@@ -576,24 +625,95 @@ def cmd_gen_stat(args):
         print(f"[ERROR] SQL file not found: {sql_path}", file=sys.stderr)
         sys.exit(1)
 
-    sql_content = sql_path.read_text(encoding="utf-8").strip()
-    if not sql_content:
-        print(f"[ERROR] SQL file is empty: {sql_path}", file=sys.stderr)
+    opts = DbOptions(host=args.host, port=args.port, user=args.user,
+                     database=args.database)
+    gen_stat(sql_path, opts, output_path=args.output)
+
+
+def gen_proposals(sql_path: Path, opts: DbOptions, stat_path: Path = None,
+                  explain_path: Path = None, output_path: Path = None) -> Path:
+    """Invoke proposal_pg.py to generate the proposals JSON file. Returns output path."""
+    stat_path = Path(stat_path) if stat_path else DATA_DIR / f"{sql_path.stem}_stat.json"
+    explain_path = Path(explain_path) if explain_path else DATA_DIR / f"{sql_path.stem}_explain.txt"
+    output_path = Path(output_path) if output_path else DATA_DIR / f"{sql_path.stem}_proposals.json"
+
+    cmd = [
+        sys.executable, str(PROPOSAL_PG_SCRIPT),
+        "--sql", str(sql_path),
+        "--stat", str(stat_path),
+        "--explain", str(explain_path),
+        "--output", str(output_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    if result.returncode != 0:
+        print(f"[ERROR] proposal_pg failed: {result.stderr.strip()}", file=sys.stderr)
+        sys.exit(1)
+    if result.stdout:
+        print(result.stdout, end="")
+    return output_path
+
+
+def run_one_query(sql_path: Path, opts: DbOptions) -> None:
+    """Full pipeline for a single SQL file: explain -> stat -> proposals -> run."""
+    sql_path = Path(sql_path)
+    logger.info(f"=== Processing {sql_path.name} ===")
+
+    logger.info("Step 1/4: Generating EXPLAIN ...")
+    explain_path = gen_explain(sql_path, opts)
+
+    logger.info("Step 2/4: Generating statistics ...")
+    stat_path = gen_stat(sql_path, opts)
+
+    logger.info("Step 3/4: Generating proposals ...")
+    proposals_path = gen_proposals(sql_path, opts, stat_path=stat_path, explain_path=explain_path)
+
+    logger.info("Step 4/4: Running proposals ...")
+    run_proposals(sql_path, opts, proposals_path=proposals_path)
+
+
+def cmd_run_one_query(args):
+    sql_path = Path(args.sql)
+    if not sql_path.exists():
+        print(f"[ERROR] SQL file not found: {sql_path}", file=sys.stderr)
         sys.exit(1)
 
-    output_path = args.output
-    if not output_path:
-        output_name = f"{sql_path.stem}_stat.json"
-        output_path = str(DATA_DIR / output_name)
+    opts = DbOptions(host=args.host, port=args.port, user=args.user,
+                     database=args.database, sleep=args.sleep)
+    run_one_query(sql_path, opts)
 
-    collector = PgMetadataCollector(
-        host=args.host, port=args.port, user=args.user, dbname=args.database,
-    )
-    try:
-        collector.collect_all(sql_content)
-        collector.export_json(output_path)
-    finally:
-        collector.close()
+
+def discover_sql_files(directory: Path):
+    """Recursively find all .sql files under directory, sorted by relative path."""
+    return sorted(directory.rglob("*.sql"))
+
+
+def run_queries(directory: Path, opts: DbOptions) -> None:
+    """Run the full pipeline for every SQL file under directory (recursive)."""
+    directory = Path(directory)
+    if not directory.is_dir():
+        print(f"[ERROR] Directory not found: {directory}", file=sys.stderr)
+        sys.exit(1)
+
+    sql_files = discover_sql_files(directory)
+    if not sql_files:
+        print(f"[WARNING] No .sql files found under {directory}")
+        return
+
+    logger.info(f"Found {len(sql_files)} SQL file(s) under {directory}")
+    for i, sql_path in enumerate(sql_files, 1):
+        logger.info(f"--- [{i}/{len(sql_files)}] {sql_path} ---")
+        try:
+            run_one_query(sql_path, opts)
+        except Exception as e:
+            logger.error(f"Failed to process {sql_path}: {e}")
+        if i < len(sql_files):
+            time.sleep(opts.sleep)
+
+
+def cmd_run_queries(args):
+    opts = DbOptions(host=args.host, port=args.port, user=args.user,
+                     database=args.database, sleep=args.sleep)
+    run_queries(Path(args.dir), opts)
 
 
 def main():
@@ -633,6 +753,28 @@ def main():
     p_run_proposals.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
     p_run_proposals.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
     p_run_proposals.set_defaults(func=cmd_run_proposals)
+
+    # run_one_query
+    p_run_one_query = subparsers.add_parser("run_one_query", help="Full pipeline for a single SQL file")
+    p_run_one_query.add_argument("--sql", type=str, required=True, help="Path to SQL file")
+    p_run_one_query.add_argument("--sleep", type=float, default=3.0,
+                                 help="Seconds to sleep between proposals (default: 3.0)")
+    p_run_one_query.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
+    p_run_one_query.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
+    p_run_one_query.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
+    p_run_one_query.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
+    p_run_one_query.set_defaults(func=cmd_run_one_query)
+
+    # run_queries
+    p_run_queries = subparsers.add_parser("run_queries", help="Full pipeline for every SQL file in a directory")
+    p_run_queries.add_argument("--dir", type=str, required=True, help="Directory containing SQL files (recursive)")
+    p_run_queries.add_argument("--sleep", type=float, default=3.0,
+                               help="Seconds to sleep between queries (default: 3.0)")
+    p_run_queries.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
+    p_run_queries.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
+    p_run_queries.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
+    p_run_queries.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
+    p_run_queries.set_defaults(func=cmd_run_queries)
 
     args = parser.parse_args()
     args.func(args)
