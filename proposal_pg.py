@@ -6,6 +6,7 @@ Includes system prompt, measures client time and estimates server processing tim
 import argparse
 import os
 import time
+from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
@@ -23,8 +24,8 @@ DEFAULT_TIMEOUT = 300
 
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Optimizer program")
-parser.add_argument("--output", "--output-file", type=str, required=True,
-                    help="Output file path (required)")
+parser.add_argument("--output", "--output-file", type=str, default=None,
+                    help="Output file path (default: ./data/{sql_stem}_result.json)")
 parser.add_argument("--sql", type=str, required=True,
                     help="Path to SQL file (required)")
 parser.add_argument("--meta", type=str, default=None,
@@ -49,7 +50,7 @@ def read_file(filepath):
         print(f"[ERROR] Failed to read file {filepath}: {e}")
         return ""
 
-OUTPUT_FILE = args.output
+OUTPUT_FILE = args.output or str(Path("./data") / f"{Path(args.sql).stem}_result.json")
 SQL_CONTENT = read_file(args.sql)
 META_STAT_CONTENT = read_file(args.meta) if args.meta else ""
 EXPLAIN_CONTENT = read_file(args.explain) if args.explain else ""

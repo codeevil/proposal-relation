@@ -461,8 +461,7 @@ def cmd_gen_explain(args):
 
     explain_output = run_psql(f"EXPLAIN ANALYZE {sql_content}", db=args.database)
 
-    output_name = f"{sql_path.stem}_explain.txt"
-    output_path = DATA_DIR / output_name
+    output_path = Path(args.output) if args.output else DATA_DIR / f"{sql_path.stem}_explain.txt"
     output_path.write_text(explain_output, encoding="utf-8")
 
     print(f"[INFO] EXPLAIN ANALYZE written to: {output_path}")
@@ -500,6 +499,8 @@ def main():
 
     # gen_explain
     p_gen_explain = subparsers.add_parser("gen_explain", help="Generate EXPLAIN ANALYZE output")
+    p_gen_explain.add_argument("--output", type=str, default=None,
+                                help="Output file path (default: ./data/{sql_stem}_explain.txt)")
     p_gen_explain.add_argument("--sql", type=str, required=True, help="Path to SQL file")
     p_gen_explain.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
     p_gen_explain.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
