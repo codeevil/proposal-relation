@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 PGHOST = "localhost"
 PGPORT = 9432
 PGUSER = "postgres"
-PGDATABASE = "postgres"
+PGDATABASE = "dsb_10"
 PSQL_BIN = "/home/liujianzhong/postgresql-15.5/bin/psql"
 
 DATA_DIR = Path("./data")
@@ -38,7 +38,7 @@ def run_psql(sql: str, db: str = PGDATABASE, host: str = PGHOST,
              port: int = PGPORT, user: str = PGUSER, raise_on_error: bool = False):
     result = subprocess.run(
         [PSQL_BIN, "-h", host, "-p", str(port), "-U", user, "-d", db,
-         "-X", "-A", "-t", "-q", "--no-psqlrc"],
+         "-X", "-A", "-t", "-q", "--no-psqlrc", "-v", "ON_ERROR_STOP=1"],
         input=sql,
         capture_output=True,
         text=True,
