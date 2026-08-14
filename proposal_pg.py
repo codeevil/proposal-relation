@@ -25,10 +25,10 @@ DEFAULT_TIMEOUT = 300
 # Parse command line arguments
 parser = argparse.ArgumentParser(description="Optimizer program")
 parser.add_argument("--output", "--output-file", type=str, default=None,
-                    help="Output file path (default: ./data/{sql_stem}_result.json)")
+                    help="Output file path (default: ./data/{sql_stem}_proposals.json)")
 parser.add_argument("--sql", type=str, required=True,
                     help="Path to SQL file (required)")
-parser.add_argument("--meta", type=str, default=None,
+parser.add_argument("--stat", type=str, default=None,
                     help="Path to metadata/statistics file")
 parser.add_argument("--explain", type=str, default=None,
                     help="Path to EXPLAIN output file")
@@ -50,9 +50,9 @@ def read_file(filepath):
         print(f"[ERROR] Failed to read file {filepath}: {e}")
         return ""
 
-OUTPUT_FILE = args.output or str(Path("./data") / f"{Path(args.sql).stem}_result.json")
+OUTPUT_FILE = args.output or str(Path("./data") / f"{Path(args.sql).stem}_proposals.json")
 SQL_CONTENT = read_file(args.sql)
-META_STAT_CONTENT = read_file(args.meta) if args.meta else ""
+META_STAT_CONTENT = read_file(args.stat) if args.stat else ""
 EXPLAIN_CONTENT = read_file(args.explain) if args.explain else ""
 PROPOSAL_COUNT = 20
 
@@ -69,6 +69,35 @@ PROPOSAL_COUNT = 20
 # STAT_FILE = DATASET_STAT_MAP.get(args.dataset) if args.dataset else "/home/liujianzhong/proposal-source/stat.txt"
 # STAT_CONTENT = read_file(STAT_FILE)
 
+TEMPLATE_CONTENT = """
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "修正行数估计偏差，调整连接顺序并强制哈希连接，解决大表嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正orders表行数估计，修正优化器对驱动表规模的误判",
+      "调整连接顺序为customer→orders→order_item，将小结果集customer作为驱动表",
+      "强制customer与orders使用HashJoin，替代原低效的NestLoop",
+      "提升order_item表并行度至4，加速大表扫描"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders order_item) ) HashJoin(customer orders) HashJoin(customer orders order_item) Parallel(order_item 4) */",
+    "expected_performance_benefit": "预计降低执行耗时50%-70%，核心收益来自消除嵌套循环对大表的千万次循环扫描，同时并行加速大表扫描"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "优化索引扫描路径，使用覆盖索引实现仅索引扫描，减少回表IO开销",
+    "core_optimization_points": [
+      "强制orders表使用idx_orders_cust_date索引进行仅索引扫描",
+      "保持原连接顺序，强制使用MergeJoin复用索引排序结果",
+      "调整random_page_cost为1.1，匹配SSD存储的随机读性能"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(orders idx_orders_cust_date) MergeJoin(customer orders) Set(random_page_cost 1.1) */",
+    "expected_performance_benefit": "预计降低执行耗时30%-40%，核心收益来自避免orders表的回表IO，合并连接复用索引排序"
+  }
+]
+```
+"""
 
 PROMPTS = [
 f"""
@@ -373,33 +402,7 @@ PostgreSQL支持并行顺序扫描、并行索引扫描、并行哈希连接、�
 | expected_performance_benefit | string | 预期性能收益描述，说明优化逻辑依据与大致耗时降幅 |
 
 ### 输出示例
-```json
-[
-  {
-    "proposal_id": 1,
-    "strategy_overview": "修正行数估计偏差，调整连接顺序并强制哈希连接，解决大表嵌套循环性能瓶颈",
-    "core_optimization_points": [
-      "校正orders表行数估计，修正优化器对驱动表规模的误判",
-      "调整连接顺序为customer→orders→order_item，将小结果集customer作为驱动表",
-      "强制customer与orders使用HashJoin，替代原低效的NestLoop",
-      "提升order_item表并行度至4，加速大表扫描"
-    ],
-    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders order_item) ) HashJoin(customer orders) HashJoin(customer orders order_item) Parallel(order_item 4) */",
-    "expected_performance_benefit": "预计降低执行耗时50%-70%，核心收益来自消除嵌套循环对大表的千万次循环扫描，同时并行加速大表扫描"
-  },
-  {
-    "proposal_id": 2,
-    "strategy_overview": "优化索引扫描路径，使用覆盖索引实现仅索引扫描，减少回表IO开销",
-    "core_optimization_points": [
-      "强制orders表使用idx_orders_cust_date索引进行仅索引扫描",
-      "保持原连接顺序，强制使用MergeJoin复用索引排序结果",
-      "调整random_page_cost为1.1，匹配SSD存储的随机读性能"
-    ],
-    "hint_combination": "/*+ IndexOnlyScan(orders idx_orders_cust_date) MergeJoin(customer orders) Set(random_page_cost 1.1) */",
-    "expected_performance_benefit": "预计降低执行耗时30%-40%，核心收益来自避免orders表的回表IO，合并连接复用索引排序"
-  }
-]
-```
+{TEMPLATE_CONTENT}
 
 """
 ]
@@ -489,8 +492,8 @@ def main():
     print(f"[INFO] Model: {MODEL_NAME}")
     print(f"[INFO] Output file: {OUTPUT_FILE}")
     # print(f"[INFO] SQL content length: {len(SQL_CONTENT)}")
-    if args.selectivity is not None:
-        print(f"[INFO] Selectivity: {args.selectivity}")
+    # if args.selectivity is not None:
+    #     print(f"[INFO] Selectivity: {args.selectivity}")
 
     # print(f"\n[INFO] System prompt: {SYSTEM_PROMPT}")
     # print(f"=" * 60)
@@ -502,9 +505,9 @@ def main():
     messages = []
 
     # 如果指定了选择率，先插入一条上下文消息
-    if args.selectivity is not None:
-        sel_msg = f"当前数据集选择率: {args.selectivity}（标量条件大约过滤到 {args.selectivity*100:.2f}% 的数据）"
-        messages.append({"role": "user", "content": sel_msg})
+    # if args.selectivity is not None:
+    #     sel_msg = f"当前数据集选择率: {args.selectivity}（标量条件大约过滤到 {args.selectivity*100:.2f}% 的数据）"
+    #     messages.append({"role": "user", "content": sel_msg})
 
     # # Replace placeholders in prompts with actual values
     # processed_prompts = [p.replace("{SQL_CONTENT}", SQL_CONTENT).replace("{STAT_CONTENT}", STAT_CONTENT).replace("{PROPOSAL_COUNT}", PROPOSAL_COUNT) for p in PROMPTS]
