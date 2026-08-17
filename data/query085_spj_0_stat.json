@@ -1,0 +1,501 @@
+{
+  "sql_info": {
+    "original_sql": "",
+    "schema": "public",
+    "extracted_tables": [
+      {
+        "table_name": "web_sales",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "web_returns",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "web_page",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "customer_demographics",
+        "schema_name": "public",
+        "alias": "cd1"
+      },
+      {
+        "table_name": "customer_address",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "date_dim",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "reason",
+        "schema_name": "public",
+        "alias": null
+      }
+    ]
+  },
+  "tables": {
+    "public.web_sales": {
+      "table_metadata": {
+        "relname": "web_sales",
+        "relnamespace": "public",
+        "reltuples": 7198051,
+        "relpages": 185660,
+        "relallvisible": 185660
+      },
+      "indexes": [
+        {
+          "index_name": "_dta_index_web_sales_6_1269579561__k18_16",
+          "index_type": "btree",
+          "index_columns": [
+            "ws_order_number",
+            "ws_warehouse_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_web_sales_6_1269579561__k1_8_24",
+          "index_type": "btree",
+          "index_columns": [
+            "ws_sold_date_sk",
+            "ws_bill_addr_sk",
+            "ws_ext_sales_price"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_web_sales_6_1269579561__k1_k4_k5_18",
+          "index_type": "btree",
+          "index_columns": [
+            "ws_sold_date_sk",
+            "ws_item_sk",
+            "ws_bill_customer_sk",
+            "ws_order_number"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_web_sales_6_1269579561__k1_k5",
+          "index_type": "btree",
+          "index_columns": [
+            "ws_sold_date_sk",
+            "ws_bill_customer_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_web_sales_6_1269579561__k3_k18_k12_k14_16_29_34",
+          "index_type": "btree",
+          "index_columns": [
+            "ws_ship_date_sk",
+            "ws_order_number",
+            "ws_ship_addr_sk",
+            "ws_web_site_sk",
+            "ws_warehouse_sk",
+            "ws_ext_ship_cost",
+            "ws_net_profit"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "web_sales_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "ws_item_sk",
+            "ws_order_number"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "ws_item_sk": {
+          "attname": "ws_item_sk",
+          "n_distinct": 23678.0,
+          "null_frac": 0.0
+        },
+        "ws_net_profit": {
+          "attname": "ws_net_profit",
+          "n_distinct": 122141.0,
+          "null_frac": 0.0
+        },
+        "ws_order_number": {
+          "attname": "ws_order_number",
+          "n_distinct": 114406.0,
+          "null_frac": 0.0
+        },
+        "ws_quantity": {
+          "attname": "ws_quantity",
+          "n_distinct": 100.0,
+          "null_frac": 0.00016666666
+        },
+        "ws_sales_price": {
+          "attname": "ws_sales_price",
+          "n_distinct": 4743.0,
+          "null_frac": 0.00023333334
+        },
+        "ws_sold_date_sk": {
+          "attname": "ws_sold_date_sk",
+          "n_distinct": 2123.0,
+          "null_frac": 0.00026666667
+        },
+        "ws_web_page_sk": {
+          "attname": "ws_web_page_sk",
+          "n_distinct": 110.0,
+          "null_frac": 0.00023333334
+        }
+      }
+    },
+    "public.web_returns": {
+      "table_metadata": {
+        "relname": "web_returns",
+        "relnamespace": "public",
+        "reltuples": 1440354,
+        "relpages": 26516,
+        "relallvisible": 26516
+      },
+      "indexes": [
+        {
+          "index_name": "web_returns_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "wr_item_sk",
+            "wr_order_number"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "wr_fee": {
+          "attname": "wr_fee",
+          "n_distinct": 9897.0,
+          "null_frac": 0.0456
+        },
+        "wr_item_sk": {
+          "attname": "wr_item_sk",
+          "n_distinct": 23075.0,
+          "null_frac": 0.0
+        },
+        "wr_order_number": {
+          "attname": "wr_order_number",
+          "n_distinct": -0.30220488,
+          "null_frac": 0.0
+        },
+        "wr_reason_sk": {
+          "attname": "wr_reason_sk",
+          "n_distinct": 45.0,
+          "null_frac": 0.046433333
+        },
+        "wr_refunded_addr_sk": {
+          "attname": "wr_refunded_addr_sk",
+          "n_distinct": -0.11482594,
+          "null_frac": 0.044666667
+        },
+        "wr_refunded_cash": {
+          "attname": "wr_refunded_cash",
+          "n_distinct": 53175.0,
+          "null_frac": 0.0434
+        },
+        "wr_refunded_cdemo_sk": {
+          "attname": "wr_refunded_cdemo_sk",
+          "n_distinct": -0.16231774,
+          "null_frac": 0.045566667
+        },
+        "wr_returning_cdemo_sk": {
+          "attname": "wr_returning_cdemo_sk",
+          "n_distinct": -0.16097918,
+          "null_frac": 0.045733333
+        }
+      }
+    },
+    "public.web_page": {
+      "table_metadata": {
+        "relname": "web_page",
+        "relnamespace": "public",
+        "reltuples": 200,
+        "relpages": 5,
+        "relallvisible": 0
+      },
+      "indexes": [
+        {
+          "index_name": "web_page_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "wp_web_page_sk"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "wp_web_page_sk": {
+          "attname": "wp_web_page_sk",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.customer_demographics": {
+      "table_metadata": {
+        "relname": "customer_demographics",
+        "relnamespace": "public",
+        "reltuples": 1920800,
+        "relpages": 21828,
+        "relallvisible": 21828
+      },
+      "indexes": [
+        {
+          "index_name": "customer_demographics_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "cd_demo_sk"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "cd_demo_sk": {
+          "attname": "cd_demo_sk",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "cd_education_status": {
+          "attname": "cd_education_status",
+          "n_distinct": 7.0,
+          "null_frac": 0.0
+        },
+        "cd_marital_status": {
+          "attname": "cd_marital_status",
+          "n_distinct": 5.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.customer_address": {
+      "table_metadata": {
+        "relname": "customer_address",
+        "relnamespace": "public",
+        "reltuples": 250000,
+        "relpages": 5417,
+        "relallvisible": 5417
+      },
+      "indexes": [
+        {
+          "index_name": "customer_address_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "ca_address_sk"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "ca_address_sk": {
+          "attname": "ca_address_sk",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "ca_country": {
+          "attname": "ca_country",
+          "n_distinct": 1.0,
+          "null_frac": 0.029533334
+        },
+        "ca_state": {
+          "attname": "ca_state",
+          "n_distinct": 51.0,
+          "null_frac": 0.029066667
+        }
+      }
+    },
+    "public.date_dim": {
+      "table_metadata": {
+        "relname": "date_dim",
+        "relnamespace": "public",
+        "reltuples": 73049,
+        "relpages": 1405,
+        "relallvisible": 1405
+      },
+      "indexes": [
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k1_k7_k9",
+          "index_type": "btree",
+          "index_columns": [
+            "d_date_sk",
+            "d_year",
+            "d_moy"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k4_1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_month_seq",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k4_k3",
+          "index_type": "btree",
+          "index_columns": [
+            "d_month_seq",
+            "d_date"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k7_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_year",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k7_k11_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_year",
+            "d_qoy",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k7_k4_k9_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_year",
+            "d_month_seq",
+            "d_moy",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k7_k9",
+          "index_type": "btree",
+          "index_columns": [
+            "d_year",
+            "d_moy"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k7_k9_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_year",
+            "d_moy",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k9_k7_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_moy",
+            "d_year",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "date_dim_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "d_date_sk"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "d_date_sk": {
+          "attname": "d_date_sk",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "d_year": {
+          "attname": "d_year",
+          "n_distinct": 200.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.reason": {
+      "table_metadata": {
+        "relname": "reason",
+        "relnamespace": "public",
+        "reltuples": 45,
+        "relpages": 1,
+        "relallvisible": 0
+      },
+      "indexes": [
+        {
+          "index_name": "reason_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "r_reason_sk"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "r_reason_sk": {
+          "attname": "r_reason_sk",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        }
+      }
+    }
+  }
+}

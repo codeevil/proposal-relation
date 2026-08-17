@@ -1,0 +1,35 @@
+Aggregate  (cost=151463.95..151463.96 rows=1 width=216) (actual time=37583.879..37651.966 rows=1 loops=1)
+  ->  Nested Loop  (cost=2626.22..151463.92 rows=1 width=72) (actual time=1069.311..37651.599 rows=37 loops=1)
+        Join Filter: ((d1.d_date <= d2.d_date) AND (d1.d_date >= (d2.d_date - '120 days'::interval)))
+        Rows Removed by Join Filter: 15
+        ->  Gather  (cost=2625.92..151463.59 rows=1 width=72) (actual time=286.022..37647.065 rows=379 loops=1)
+              Workers Planned: 4
+              Workers Launched: 1
+              ->  Nested Loop  (cost=1625.92..150463.49 rows=1 width=72) (actual time=1252.144..37570.968 rows=190 loops=2)
+                    Join Filter: (store.s_store_sk = store_sales.ss_store_sk)
+                    ->  Hash Join  (cost=1625.36..143624.98 rows=10072 width=80) (actual time=24.486..1598.916 rows=33066 loops=2)
+                          Hash Cond: (store_returns.sr_store_sk = store.s_store_sk)
+                          ->  Parallel Hash Join  (cost=1618.86..143255.76 rows=132840 width=24) (actual time=24.304..1530.690 rows=243355 loops=2)
+                                Hash Cond: (store_returns.sr_returned_date_sk = d2.d_date_sk)
+                                ->  Parallel Seq Scan on store_returns  (cost=0.00..136912.96 rows=1799496 width=20) (actual time=0.027..568.947 rows=3599097 loops=2)
+                                ->  Parallel Hash  (cost=1577.78..1577.78 rows=3286 width=8) (actual time=24.022..24.023 rows=2824 loops=2)
+                                      Buckets: 8192  Batches: 1  Memory Usage: 320kB
+                                      ->  Parallel Bitmap Heap Scan on date_dim d2  (cost=131.71..1577.78 rows=3286 width=8) (actual time=21.345..23.426 rows=2824 loops=2)
+                                            Recheck Cond: (d_moy = 2)
+                                            Heap Blocks: exact=143
+                                            ->  Bitmap Index Scan on _dta_index_date_dim_6_661577395__k9_k7_k1  (cost=0.00..130.31 rows=5586 width=0) (actual time=23.395..23.395 rows=5649 loops=1)
+                                                  Index Cond: (d_moy = 2)
+                          ->  Hash  (cost=6.40..6.40 rows=8 width=56) (actual time=0.090..0.091 rows=7 loops=2)
+                                Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                ->  Seq Scan on store  (cost=0.00..6.40 rows=8 width=56) (actual time=0.022..0.081 rows=7 loops=2)
+                                      Filter: (s_state = ANY ('{IL,ME,MI}'::bpchar[]))
+                                      Rows Removed by Filter: 95
+                    ->  Index Only Scan using _dta_index_store_sales_6_1333579789__k3_k10_k4_k1_k8 on store_sales  (cost=0.56..0.67 rows=1 width=20) (actual time=1.087..1.087 rows=0 loops=66131)
+                          Index Cond: ((ss_item_sk = store_returns.sr_item_sk) AND (ss_ticket_number = store_returns.sr_ticket_number) AND (ss_customer_sk = store_returns.sr_customer_sk) AND (ss_store_sk = store_returns.sr_store_sk))
+                          Heap Fetches: 0
+        ->  Index Scan using date_dim_pkey on date_dim d1  (cost=0.29..0.31 rows=1 width=8) (actual time=0.010..0.010 rows=0 loops=379)
+              Index Cond: (d_date_sk = store_sales.ss_sold_date_sk)
+              Filter: (d_dow = 1)
+              Rows Removed by Filter: 1
+Planning Time: 6.472 ms
+Execution Time: 37652.190 ms

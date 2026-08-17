@@ -1,25 +1,25 @@
-Aggregate  (cost=15726.95..15726.96 rows=1 width=40) (actual time=218.700..218.784 rows=1 loops=1)
-  ->  Gather  (cost=1009.28..15726.94 rows=1 width=14) (actual time=28.556..218.769 rows=6 loops=1)
+Aggregate  (cost=15726.95..15726.96 rows=1 width=40) (actual time=222.733..222.817 rows=1 loops=1)
+  ->  Gather  (cost=1009.28..15726.94 rows=1 width=14) (actual time=28.455..222.799 rows=6 loops=1)
         Workers Planned: 2
         Workers Launched: 2
-        ->  Nested Loop  (cost=9.29..14726.84 rows=1 width=14) (actual time=10.451..73.828 rows=2 loops=3)
+        ->  Nested Loop  (cost=9.29..14726.84 rows=1 width=14) (actual time=10.276..75.030 rows=2 loops=3)
               Join Filter: ("substring"((customer_address.ca_zip)::text, 1, 5) <> "substring"((store.s_zip)::text, 1, 5))
-              ->  Nested Loop  (cost=8.87..14719.93 rows=4 width=29) (actual time=1.858..73.008 rows=104 loops=3)
-                    ->  Nested Loop  (cost=8.44..14677.27 rows=94 width=29) (actual time=1.722..60.607 rows=2595 loops=3)
-                          ->  Hash Join  (cost=8.15..14428.67 rows=782 width=25) (actual time=1.647..29.004 rows=16138 loops=3)
+              ->  Nested Loop  (cost=8.87..14719.93 rows=4 width=29) (actual time=1.680..74.170 rows=104 loops=3)
+                    ->  Nested Loop  (cost=8.44..14677.27 rows=94 width=29) (actual time=1.549..61.577 rows=2595 loops=3)
+                          ->  Hash Join  (cost=8.15..14428.67 rows=782 width=25) (actual time=1.476..28.894 rows=16138 loops=3)
                                 Hash Cond: (store_sales.ss_store_sk = store.s_store_sk)
-                                ->  Nested Loop  (cost=0.85..14419.13 rows=819 width=18) (actual time=1.613..26.015 rows=16330 loops=3)
-                                      ->  Parallel Index Only Scan using _dta_index_date_dim_6_661577395__k1_k7_k9 on date_dim  (cost=0.29..1858.90 rows=12 width=4) (actual time=1.580..1.582 rows=9 loops=3)
+                                ->  Nested Loop  (cost=0.85..14419.13 rows=819 width=18) (actual time=1.445..25.912 rows=16330 loops=3)
+                                      ->  Parallel Index Only Scan using _dta_index_date_dim_6_661577395__k1_k7_k9 on date_dim  (cost=0.29..1858.90 rows=12 width=4) (actual time=1.418..1.422 rows=9 loops=3)
                                             Index Cond: ((d_year = 2001) AND (d_moy = 2))
                                             Heap Fetches: 0
-                                      ->  Index Only Scan using _dta_index_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4 on store_sales  (cost=0.56..1021.72 rows=2497 width=22) (actual time=0.012..2.475 rows=1750 loops=28)
+                                      ->  Index Only Scan using _dta_index_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4 on store_sales  (cost=0.56..1021.72 rows=2497 width=22) (actual time=0.012..2.483 rows=1750 loops=28)
                                             Index Cond: (ss_sold_date_sk = date_dim.d_date_sk)
                                             Filter: ((ss_wholesale_cost >= '73'::numeric) AND (ss_wholesale_cost <= '93'::numeric))
                                             Rows Removed by Filter: 7400
                                             Heap Fetches: 0
-                                ->  Hash  (cost=6.02..6.02 rows=102 width=15) (actual time=0.078..0.079 rows=102 loops=1)
+                                ->  Hash  (cost=6.02..6.02 rows=102 width=15) (actual time=0.075..0.075 rows=102 loops=1)
                                       Buckets: 1024  Batches: 1  Memory Usage: 13kB
-                                      ->  Seq Scan on store  (cost=0.00..6.02 rows=102 width=15) (actual time=0.005..0.052 rows=102 loops=1)
+                                      ->  Seq Scan on store  (cost=0.00..6.02 rows=102 width=15) (actual time=0.004..0.050 rows=102 loops=1)
                           ->  Index Scan using item_pkey on item  (cost=0.29..0.32 rows=1 width=12) (actual time=0.002..0.002 rows=0 loops=48415)
                                 Index Cond: (i_item_sk = store_sales.ss_item_sk)
                                 Filter: (i_category = 'Books'::bpchar)
@@ -32,5 +32,5 @@ Aggregate  (cost=15726.95..15726.96 rows=1 width=40) (actual time=218.700..218.7
                     Index Cond: (ca_address_sk = customer.c_current_addr_sk)
                     Filter: (ca_state = 'IL'::bpchar)
                     Rows Removed by Filter: 1
-Planning Time: 6.316 ms
-Execution Time: 218.929 ms
+Planning Time: 6.287 ms
+Execution Time: 222.959 ms

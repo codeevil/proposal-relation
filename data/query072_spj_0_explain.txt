@@ -1,0 +1,49 @@
+Aggregate  (cost=192422.32..192422.33 rows=1 width=52) (actual time=479.454..498.832 rows=1 loops=1)
+  ->  Nested Loop  (cost=189767.55..192422.31 rows=1 width=37) (actual time=468.238..498.780 rows=111 loops=1)
+        Join Filter: (d3.d_date > (d1.d_date + '3 days'::interval))
+        Rows Removed by Join Filter: 5
+        ->  Nested Loop  (cost=189767.26..192421.98 rows=1 width=45) (actual time=468.202..498.520 rows=116 loops=1)
+              ->  Gather  (cost=189767.12..192421.82 rows=1 width=32) (actual time=468.188..498.373 rows=116 loops=1)
+                    Workers Planned: 1
+                    Workers Launched: 1
+                    ->  Nested Loop  (cost=188767.12..191421.72 rows=1 width=32) (actual time=464.264..475.205 rows=58 loops=2)
+                          ->  Parallel Hash Join  (cost=188766.55..190762.64 rows=45 width=32) (actual time=463.941..467.225 rows=696 loops=2)
+                                Hash Cond: (d2.d_week_seq = d1.d_week_seq)
+                                ->  Parallel Seq Scan on date_dim d2  (cost=0.00..1834.70 rows=42970 width=8) (actual time=0.017..2.910 rows=36524 loops=2)
+                                ->  Parallel Hash  (cost=188766.48..188766.48 rows=6 width=28) (actual time=460.000..460.006 rows=100 loops=2)
+                                      Buckets: 1024  Batches: 1  Memory Usage: 72kB
+                                      ->  Nested Loop  (cost=159.16..188766.48 rows=6 width=28) (actual time=11.889..391.927 rows=100 loops=2)
+                                            ->  Nested Loop  (cost=158.73..188651.54 rows=216 width=32) (actual time=4.218..359.291 rows=3958 loops=2)
+                                                  ->  Hash Join  (cost=158.44..188431.74 rows=656 width=28) (actual time=3.804..302.917 rows=18311 loops=2)
+                                                        Hash Cond: (catalog_sales.cs_bill_hdemo_sk = household_demographics.hd_demo_sk)
+                                                        ->  Nested Loop  (cost=0.43..188263.33 rows=3961 width=32) (actual time=2.775..289.809 rows=87519 loops=2)
+                                                              ->  Parallel Seq Scan on date_dim d1  (cost=0.00..1942.12 rows=214 width=12) (actual time=2.674..4.371 rows=182 loops=2)
+                                                                    Filter: (d_year = 1999)
+                                                                    Rows Removed by Filter: 36342
+                                                              ->  Index Scan using _dta_index_catalog_sales_6_1301579675__k1_4 on catalog_sales  (cost=0.43..864.24 rows=642 width=32) (actual time=0.010..1.522 rows=480 loops=365)
+                                                                    Index Cond: (cs_sold_date_sk = d1.d_date_sk)
+                                                                    Filter: ((cs_wholesale_cost >= '73'::numeric) AND (cs_wholesale_cost <= '93'::numeric))
+                                                                    Rows Removed by Filter: 4708
+                                                        ->  Hash  (cost=143.00..143.00 rows=1200 width=4) (actual time=0.988..0.989 rows=1200 loops=2)
+                                                              Buckets: 2048  Batches: 1  Memory Usage: 59kB
+                                                              ->  Seq Scan on household_demographics  (cost=0.00..143.00 rows=1200 width=4) (actual time=0.024..0.829 rows=1200 loops=2)
+                                                                    Filter: (hd_buy_potential = '1001-5000'::bpchar)
+                                                                    Rows Removed by Filter: 6000
+                                                  ->  Index Scan using item_pkey on item  (cost=0.29..0.34 rows=1 width=4) (actual time=0.003..0.003 rows=0 loops=36622)
+                                                        Index Cond: (i_item_sk = catalog_sales.cs_item_sk)
+                                                        Filter: (i_category = ANY ('{Books,Jewelry,Shoes}'::bpchar[]))
+                                                        Rows Removed by Filter: 1
+                                            ->  Index Scan using customer_demographics_pkey on customer_demographics  (cost=0.43..0.53 rows=1 width=4) (actual time=0.008..0.008 rows=0 loops=7915)
+                                                  Index Cond: (cd_demo_sk = catalog_sales.cs_bill_cdemo_sk)
+                                                  Filter: ((cd_dep_count >= 6) AND (cd_dep_count <= 8) AND (cd_marital_status = 'M'::bpchar))
+                                                  Rows Removed by Filter: 1
+                          ->  Index Scan using inventory_pkey on inventory  (cost=0.57..14.63 rows=2 width=16) (actual time=0.009..0.011 rows=0 loops=1393)
+                                Index Cond: ((inv_date_sk = d2.d_date_sk) AND (inv_item_sk = catalog_sales.cs_item_sk))
+                                Filter: (inv_quantity_on_hand < catalog_sales.cs_quantity)
+                                Rows Removed by Filter: 1
+              ->  Index Scan using warehouse_pkey on warehouse  (cost=0.14..0.15 rows=1 width=21) (actual time=0.001..0.001 rows=1 loops=116)
+                    Index Cond: (w_warehouse_sk = inventory.inv_warehouse_sk)
+        ->  Index Scan using date_dim_pkey on date_dim d3  (cost=0.29..0.31 rows=1 width=8) (actual time=0.002..0.002 rows=1 loops=116)
+              Index Cond: (d_date_sk = catalog_sales.cs_ship_date_sk)
+Planning Time: 19.733 ms
+Execution Time: 499.076 ms

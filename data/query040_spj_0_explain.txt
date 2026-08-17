@@ -1,0 +1,27 @@
+Aggregate  (cost=39726.80..39726.81 rows=1 width=80) (actual time=231.987..241.560 rows=1 loops=1)
+  ->  Nested Loop  (cost=1001.29..39726.79 rows=1 width=36) (actual time=39.780..241.476 rows=13 loops=1)
+        ->  Gather  (cost=1001.16..39726.63 rows=1 width=37) (actual time=39.759..241.378 rows=13 loops=1)
+              Workers Planned: 1
+              Workers Launched: 1
+              ->  Nested Loop  (cost=1.16..38726.53 rows=1 width=37) (actual time=32.710..182.589 rows=6 loops=2)
+                    ->  Nested Loop  (cost=0.73..38687.96 rows=74 width=33) (actual time=3.974..175.816 rows=962 loops=2)
+                          ->  Nested Loop  (cost=0.43..38187.24 rows=1528 width=12) (actual time=3.475..73.270 rows=40602 loops=2)
+                                ->  Parallel Seq Scan on date_dim  (cost=0.00..2049.55 rows=39 width=4) (actual time=3.364..5.171 rows=30 loops=2)
+                                      Filter: ((d_date >= '2001-04-21 00:00:00'::timestamp without time zone) AND (d_date <= '2001-06-20 00:00:00'::timestamp without time zone))
+                                      Rows Removed by Filter: 36494
+                                ->  Index Scan using _dta_index_catalog_sales_6_1301579675__k1_4 on catalog_sales  (cost=0.43..913.19 rows=1342 width=16) (actual time=0.011..2.126 rows=1331 loops=61)
+                                      Index Cond: (cs_sold_date_sk = date_dim.d_date_sk)
+                                      Filter: ((cs_wholesale_cost >= '81'::numeric) AND (cs_wholesale_cost <= '100'::numeric))
+                                      Rows Removed by Filter: 5335
+                          ->  Index Scan using item_pkey on item  (cost=0.29..0.33 rows=1 width=21) (actual time=0.002..0.002 rows=0 loops=81205)
+                                Index Cond: (i_item_sk = catalog_sales.cs_item_sk)
+                                Filter: ((i_manager_id >= 61) AND (i_manager_id <= 100) AND (i_category = 'Books'::bpchar))
+                                Rows Removed by Filter: 1
+                    ->  Index Scan using catalog_returns_pkey on catalog_returns  (cost=0.43..0.52 rows=1 width=8) (actual time=0.007..0.007 rows=0 loops=1923)
+                          Index Cond: ((cr_item_sk = catalog_sales.cs_item_sk) AND (cr_order_number = catalog_sales.cs_order_number))
+                          Filter: (cr_reason_sk = 5)
+                          Rows Removed by Filter: 0
+        ->  Index Scan using warehouse_pkey on warehouse  (cost=0.14..0.15 rows=1 width=7) (actual time=0.004..0.004 rows=1 loops=13)
+              Index Cond: (w_warehouse_sk = catalog_sales.cs_warehouse_sk)
+Planning Time: 4.571 ms
+Execution Time: 241.730 ms

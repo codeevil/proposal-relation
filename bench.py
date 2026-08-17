@@ -2,6 +2,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import time
@@ -567,6 +568,108 @@ def _strip_markdown_fence(text: str) -> str:
     return text.strip()
 
 
+def _escape_raw_control_chars_in_json_strings(text: str) -> str:
+    """Escape raw \\n/\\r/\\t that appear inside JSON string values.
+
+    The LLM often emits literal newlines (and tabs) inside string values instead of
+    the JSON-escaped ``\\n`` / ``\\t``. Standard ``json.loads`` rejects these as
+    'Invalid control character'. This pass walks the text and only escapes control
+    characters while we are inside a JSON string (between unescaped double quotes).
+    """
+    out = []
+    in_string = False
+    escape_next = False
+    for ch in text:
+        if escape_next:
+            out.append(ch)
+            escape_next = False
+            continue
+        if ch == "\\":
+            out.append(ch)
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            out.append(ch)
+            continue
+        if in_string and ch == "\n":
+            out.append("\\n")
+        elif in_string and ch == "\r":
+            out.append("\\r")
+        elif in_string and ch == "\t":
+            out.append("\\t")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _parse_proposals_lenient(text: str):
+    """Parse a JSON array of proposal objects, dropping malformed entries.
+
+    The LLM occasionally emits objects with malformed JSON (e.g. missing closing
+    quotes on a string). Standard ``json.loads`` fails on the whole array, which
+    loses every good proposal. Instead, decode the top-level ``[``, then parse
+    each entry with ``raw_decode`` and keep only the ones that succeed.
+
+    Returns ``(proposals_list, dropped_count)``.
+    """
+    text = text.strip()
+    decoder = json.JSONDecoder()
+    idx = 0
+    n = len(text)
+    while idx < n and text[idx] in " \t\r\n":
+        idx += 1
+    if idx >= n or text[idx] != "[":
+        raise json.JSONDecodeError("Expected top-level JSON array", text, idx)
+    idx += 1
+
+    proposals = []
+    dropped = 0
+    while True:
+        while idx < n and text[idx] in " \t\r\n":
+            idx += 1
+        if idx >= n:
+            raise json.JSONDecodeError("Unterminated JSON array", text, idx)
+        if text[idx] == "]":
+            break
+        if text[idx] != "{":
+            raise json.JSONDecodeError("Expected object start", text, idx)
+        try:
+            obj, end = decoder.raw_decode(text, idx)
+        except json.JSONDecodeError as e:
+            dropped += 1
+            print(f"[WARN] Dropping malformed proposal at pos {idx}: {e.msg}", file=sys.stderr)
+            # Skip to the next '},' (next element) or '}<ws>]' (end of array)
+            # so we land on a clean object boundary. If we can't find one
+            # within a reasonable window, abort the recovery to avoid an
+            # infinite loop.
+            # Note: literal '\n' inside JSON strings is rewritten to the
+            # two-char sequence '\\n' (backslash + n) by the escape pass above.
+            scan_end = min(n, idx + 5000)
+            scan = text[idx:scan_end]
+            ws = r"(?:\s|\\n|\\r|\\t)*"
+            candidates = []
+            for m in re.finditer(rf"\}},{ws}\{{", scan):
+                candidates.append(idx + m.end() - 1)  # position of next '{'
+            for m in re.finditer(rf"\}}{ws}\]", scan):
+                candidates.append(idx + m.end() - 1)  # position of ']' -> array end
+            if not candidates:
+                raise json.JSONDecodeError(
+                    "Could not recover from malformed proposal (no object boundary found)",
+                    text, idx,
+                ) from e
+            idx = candidates[0]
+            continue
+        proposals.append(obj)
+        idx = end
+        # Skip whitespace and optional comma
+        while idx < n and text[idx] in " \t\r\n":
+            idx += 1
+        if idx < n and text[idx] == ",":
+            idx += 1
+    return proposals, dropped
+
+
 def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None,
                   output_file = None, header: str = None):
     """Execute baseline + each proposal in the proposals file, print timing table. Returns results."""
@@ -577,7 +680,9 @@ def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None,
     if not proposals_path.exists():
         print(f"[ERROR] Proposals file not found: {proposals_path}", file=sys.stderr)
         sys.exit(1)
-    proposals = json.loads(_strip_markdown_fence(proposals_path.read_text(encoding="utf-8")))
+    proposals_text = _escape_raw_control_chars_in_json_strings(
+        _strip_markdown_fence(proposals_path.read_text(encoding="utf-8")))
+    proposals, _dropped = _parse_proposals_lenient(proposals_text)
     if not isinstance(proposals, list):
         print(f"[ERROR] Proposals file must be a JSON array", file=sys.stderr)
         sys.exit(1)

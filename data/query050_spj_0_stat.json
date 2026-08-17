@@ -1,0 +1,613 @@
+{
+  "sql_info": {
+    "original_sql": "",
+    "schema": "public",
+    "extracted_tables": [
+      {
+        "table_name": "store_sales",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "store_returns",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "store",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "date_dim",
+        "schema_name": "public",
+        "alias": "d1"
+      }
+    ]
+  },
+  "tables": {
+    "public.store_sales": {
+      "table_metadata": {
+        "relname": "store_sales",
+        "relnamespace": "public",
+        "reltuples": 28799536,
+        "relpages": 512193,
+        "relallvisible": 512193
+      },
+      "indexes": [
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k10_k3",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_ticket_number",
+            "ss_item_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_net_profit",
+            "ss_sales_price",
+            "ss_hdemo_sk",
+            "ss_store_sk",
+            "ss_cdemo_sk",
+            "ss_addr_sk",
+            "ss_item_sk",
+            "ss_customer_sk",
+            "ss_promo_sk",
+            "ss_ticket_number",
+            "ss_quantity",
+            "ss_wholesale_cost",
+            "ss_list_price",
+            "ss_ext_sales_price",
+            "ss_ext_wholesale_cost",
+            "ss_coupon_amt"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k3_11_13",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_item_sk",
+            "ss_quantity",
+            "ss_list_price"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k3_k10_k4_k8_23",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_item_sk",
+            "ss_ticket_number",
+            "ss_customer_sk",
+            "ss_store_sk",
+            "ss_net_profit"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k3_k10_k4_k8_9_16_23",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_item_sk",
+            "ss_ticket_number",
+            "ss_customer_sk",
+            "ss_store_sk",
+            "ss_promo_sk",
+            "ss_ext_sales_price",
+            "ss_net_profit"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k3_k7_16",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_item_sk",
+            "ss_addr_sk",
+            "ss_ext_sales_price"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k4_k3_k10",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_customer_sk",
+            "ss_item_sk",
+            "ss_ticket_number"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k5_k8_k3_11_13_14_20",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_cdemo_sk",
+            "ss_store_sk",
+            "ss_item_sk",
+            "ss_quantity",
+            "ss_list_price",
+            "ss_sales_price",
+            "ss_coupon_amt"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k7_k3_16",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_addr_sk",
+            "ss_item_sk",
+            "ss_ext_sales_price"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k8_3_14_16",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_store_sk",
+            "ss_item_sk",
+            "ss_sales_price",
+            "ss_ext_sales_price"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k3_k10_k4",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_item_sk",
+            "ss_ticket_number",
+            "ss_customer_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k3_k10_k4_k1_k8",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_item_sk",
+            "ss_ticket_number",
+            "ss_customer_sk",
+            "ss_sold_date_sk",
+            "ss_store_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k4_1_3_10_11_14",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_customer_sk",
+            "ss_sold_date_sk",
+            "ss_item_sk",
+            "ss_ticket_number",
+            "ss_quantity",
+            "ss_sales_price"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k4_k1_16",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_customer_sk",
+            "ss_sold_date_sk",
+            "ss_ext_sales_price"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "store_sales_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_item_sk",
+            "ss_ticket_number"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "ss_customer_sk": {
+          "attname": "ss_customer_sk",
+          "n_distinct": 87086.0,
+          "null_frac": 0.0449
+        },
+        "ss_item_sk": {
+          "attname": "ss_item_sk",
+          "n_distinct": 23603.0,
+          "null_frac": 0.0
+        },
+        "ss_sold_date_sk": {
+          "attname": "ss_sold_date_sk",
+          "n_distinct": 2053.0,
+          "null_frac": 0.044033334
+        },
+        "ss_store_sk": {
+          "attname": "ss_store_sk",
+          "n_distinct": 30.0,
+          "null_frac": 0.0444
+        },
+        "ss_ticket_number": {
+          "attname": "ss_ticket_number",
+          "n_distinct": 156308.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.store_returns": {
+      "table_metadata": {
+        "relname": "store_returns",
+        "relnamespace": "public",
+        "reltuples": 7197984,
+        "relpages": 118918,
+        "relallvisible": 118918
+      },
+      "indexes": [
+        {
+          "index_name": "_dta_index_store_returns_6_1013578649__k1_3_4_10",
+          "index_type": "btree",
+          "index_columns": [
+            "sr_returned_date_sk",
+            "sr_item_sk",
+            "sr_customer_sk",
+            "sr_ticket_number"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_returns_6_1013578649__k1_3_4_10_20",
+          "index_type": "btree",
+          "index_columns": [
+            "sr_returned_date_sk",
+            "sr_item_sk",
+            "sr_customer_sk",
+            "sr_ticket_number",
+            "sr_net_loss"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_returns_6_1013578649__k5_1_3_10_11",
+          "index_type": "btree",
+          "index_columns": [
+            "sr_cdemo_sk",
+            "sr_returned_date_sk",
+            "sr_item_sk",
+            "sr_ticket_number",
+            "sr_return_quantity"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "store_returns_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "sr_item_sk",
+            "sr_ticket_number"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "sr_customer_sk": {
+          "attname": "sr_customer_sk",
+          "n_distinct": 184779.0,
+          "null_frac": 0.0323
+        },
+        "sr_item_sk": {
+          "attname": "sr_item_sk",
+          "n_distinct": 23341.0,
+          "null_frac": 0.0
+        },
+        "sr_returned_date_sk": {
+          "attname": "sr_returned_date_sk",
+          "n_distinct": 2226.0,
+          "null_frac": 0.034633335
+        },
+        "sr_store_sk": {
+          "attname": "sr_store_sk",
+          "n_distinct": 51.0,
+          "null_frac": 0.0333
+        },
+        "sr_ticket_number": {
+          "attname": "sr_ticket_number",
+          "n_distinct": 592840.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.store": {
+      "table_metadata": {
+        "relname": "store",
+        "relnamespace": "public",
+        "reltuples": 102,
+        "relpages": 5,
+        "relallvisible": 0
+      },
+      "indexes": [
+        {
+          "index_name": "_dta_index_store_6_885578193__k1_2_6",
+          "index_type": "btree",
+          "index_columns": [
+            "s_store_sk",
+            "s_store_id",
+            "s_store_name"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_6_885578193__k25_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "s_state",
+            "s_store_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "store_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "s_store_sk"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "s_city": {
+          "attname": "s_city",
+          "n_distinct": -0.6372549,
+          "null_frac": 0.009803922
+        },
+        "s_company_id": {
+          "attname": "s_company_id",
+          "n_distinct": 1.0,
+          "null_frac": 0.009803922
+        },
+        "s_state": {
+          "attname": "s_state",
+          "n_distinct": -0.32352942,
+          "null_frac": 0.0
+        },
+        "s_store_name": {
+          "attname": "s_store_name",
+          "n_distinct": 10.0,
+          "null_frac": 0.0
+        },
+        "s_store_sk": {
+          "attname": "s_store_sk",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "s_street_name": {
+          "attname": "s_street_name",
+          "n_distinct": -0.8235294,
+          "null_frac": 0.009803922
+        },
+        "s_street_number": {
+          "attname": "s_street_number",
+          "n_distinct": -0.71568626,
+          "null_frac": 0.0
+        },
+        "s_suite_number": {
+          "attname": "s_suite_number",
+          "n_distinct": -0.5392157,
+          "null_frac": 0.0
+        },
+        "s_zip": {
+          "attname": "s_zip",
+          "n_distinct": -0.6764706,
+          "null_frac": 0.009803922
+        }
+      }
+    },
+    "public.date_dim": {
+      "table_metadata": {
+        "relname": "date_dim",
+        "relnamespace": "public",
+        "reltuples": 73049,
+        "relpages": 1405,
+        "relallvisible": 1405
+      },
+      "indexes": [
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k1_k7_k9",
+          "index_type": "btree",
+          "index_columns": [
+            "d_date_sk",
+            "d_year",
+            "d_moy"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k4_1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_month_seq",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k4_k3",
+          "index_type": "btree",
+          "index_columns": [
+            "d_month_seq",
+            "d_date"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k7_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_year",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k7_k11_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_year",
+            "d_qoy",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k7_k4_k9_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_year",
+            "d_month_seq",
+            "d_moy",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k7_k9",
+          "index_type": "btree",
+          "index_columns": [
+            "d_year",
+            "d_moy"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k7_k9_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_year",
+            "d_moy",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k9_k7_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_moy",
+            "d_year",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "date_dim_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "d_date_sk"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "d_date": {
+          "attname": "d_date",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "d_date_sk": {
+          "attname": "d_date_sk",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "d_dow": {
+          "attname": "d_dow",
+          "n_distinct": 7.0,
+          "null_frac": 0.0
+        },
+        "d_moy": {
+          "attname": "d_moy",
+          "n_distinct": 12.0,
+          "null_frac": 0.0
+        }
+      }
+    }
+  }
+}
