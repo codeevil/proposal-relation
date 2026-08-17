@@ -525,8 +525,240 @@ def _format_hint_error_message(stderr_text: str) -> str:
     return " | ".join(parts)
 
 
+def _find_balanced_paren(text: str, open_idx: int) -> int:
+    """Given the index of an '(' in ``text``, return the index of its matching ')'.
+
+    Returns -1 if no balanced closing paren is found. Ignores parens that appear
+    inside single- or double-quoted regions.
+    """
+    depth = 0
+    i = open_idx
+    in_single = False
+    in_double = False
+    while i < len(text):
+        ch = text[i]
+        if in_single:
+            if ch == "'":
+                in_single = False
+        elif in_double:
+            if ch == '"':
+                in_double = False
+        else:
+            if ch == "'":
+                in_single = True
+            elif ch == '"':
+                in_double = True
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    return i
+        i += 1
+    return -1
+
+
+def _split_top_level(body: str, sep: str = " ") -> list:
+    """Split ``body`` by ``sep`` only at parenthesis depth 0 (quote-aware)."""
+    parts = []
+    buf = []
+    depth = 0
+    in_single = False
+    in_double = False
+    i = 0
+    while i < len(body):
+        ch = body[i]
+        if in_single:
+            buf.append(ch)
+            if ch == "'":
+                in_single = False
+        elif in_double:
+            buf.append(ch)
+            if ch == '"':
+                in_double = False
+        else:
+            if ch == "'":
+                in_single = True
+                buf.append(ch)
+            elif ch == '"':
+                in_double = True
+                buf.append(ch)
+            elif ch == "(":
+                depth += 1
+                buf.append(ch)
+            elif ch == ")":
+                depth -= 1
+                buf.append(ch)
+            elif depth == 0 and body.startswith(sep, i):
+                parts.append("".join(buf))
+                buf = []
+                i += len(sep)
+                continue
+            else:
+                buf.append(ch)
+        i += 1
+    if buf:
+        parts.append("".join(buf))
+    return parts
+
+
+def _is_balanced(body: str) -> bool:
+    """Return True if ``body`` has balanced parens (quote-aware)."""
+    depth = 0
+    in_single = False
+    in_double = False
+    for ch in body:
+        if in_single:
+            if ch == "'":
+                in_single = False
+        elif in_double:
+            if ch == '"':
+                in_double = False
+        else:
+            if ch == "'":
+                in_single = True
+            elif ch == '"':
+                in_double = True
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth < 0:
+                    return False
+    return depth == 0 and not in_single and not in_double
+
+
+def _extract_leading_blocks(hint: str) -> list:
+    """Find all ``Leading(...)`` blocks in ``hint`` and return their (start, end, body).
+
+    ``start`` and ``end`` are the indices of the '(' and ')' that bound the
+    ``Leading`` argument list. ``body`` is the inner text between them.
+
+    Robust to nested parens inside the argument list (e.g. nested Leading forms
+    or bushy-tree groupings).
+    """
+    blocks = []
+    pattern = re.compile(r"Leading\s*\(", re.IGNORECASE)
+    for m in pattern.finditer(hint):
+        open_idx = m.end() - 1  # index of '('
+        close_idx = _find_balanced_paren(hint, open_idx)
+        if close_idx == -1:
+            continue
+        body = hint[open_idx + 1:close_idx]
+        blocks.append((open_idx, close_idx, body))
+    return blocks
+
+
+def _classify_leading(body: str) -> str:
+    """Classify a ``Leading`` body as ``"left_deep"``, ``"nested"``, or ``"invalid"``.
+
+    - ``left_deep``: top-level tokens are all bare identifiers (no parens).
+    - ``nested``: top-level tokens are all parenthesised subtrees (one paren
+      group each), forming a bushy tree. Per pg_hint_plan syntax this MUST be
+      wrapped in an additional outer paren pair — so a valid nested body
+      starts with '(' and ends with ')'.
+    - ``invalid``: mixed tokens, empty body, or unbalanced parens.
+    """
+    body = body.strip()
+    if not body:
+        return "invalid"
+    if not _is_balanced(body):
+        return "invalid"
+
+    top_level = _split_top_level(body, " ")
+    top_level = [t for t in top_level if t.strip()]
+    if not top_level:
+        return "invalid"
+
+    def _is_group(tok: str) -> bool:
+        t = tok.strip()
+        return t.startswith("(") and t.endswith(")") and _is_balanced(t[1:-1])
+
+    def _is_bare(tok: str) -> bool:
+        t = tok.strip()
+        return bool(t) and "(" not in t and ")" not in t
+
+    if all(_is_group(t) for t in top_level):
+        return "nested"
+    if all(_is_bare(t) for t in top_level):
+        return "left_deep"
+    return "invalid"
+
+
+def _normalize_nested_leading(body: str) -> str:
+    """Ensure a nested Leading body has its required outer paren wrap.
+
+    pg_hint_plan requires nested Leading forms to be wrapped in an extra pair
+    of parens, e.g. ``Leading( ((t1 t2) (t3 t4)) )``. Bare groupings such as
+    ``((t1 t2) (t3 t4))`` (matched parens, no outer wrap) are rejected because
+    the top level contains two sibling groups rather than one wrapped tree.
+
+    This function detects that case and inserts the outer wrap. If internal
+    subtrees are themselves invalid (mixed tokens, unbalanced parens), they are
+    left untouched — the caller should surface a hint_error via the normal
+    ``pg_hint_plan`` error path rather than silently corrupting the input.
+    """
+    stripped = body.strip()
+    if not stripped:
+        return body
+
+    top_level = [t.strip() for t in _split_top_level(body, " ") if t.strip()]
+
+    def _is_group(tok: str) -> bool:
+        t = tok.strip()
+        return t.startswith("(") and t.endswith(")") and _is_balanced(t[1:-1])
+
+    # The required outer wrap exists iff, after stripping, the body has exactly
+    # one whitespace-separated top-level token that itself is a parenthesised
+    # balanced group. Two-or-more top-level groups (e.g. "(ta tb) (tc td)")
+    # mean the outer wrap is missing.
+    has_outer_wrap = (
+        len(top_level) == 1 and _is_group(top_level[0])
+    )
+
+    if has_outer_wrap:
+        # Preserve the body's original whitespace verbatim when no rewrite is
+        # needed; only strip() if we actually need to insert the outer wrap.
+        return body
+
+    if len(top_level) >= 2 and all(_is_group(t) for t in top_level):
+        return f"({stripped})"
+    return body
+
+
+def _fix_leading_hint(hint: str) -> str:
+    """Walk a hint string, normalise every ``Leading(...)`` block.
+
+    Currently performs:
+      - nested Leading: adds the required outer paren wrap if missing.
+
+    Returns the (possibly rewritten) hint string. Designed to be extensible:
+    add new Leading normalisations by extending the steps inside this function
+    rather than touching callers.
+    """
+    blocks = _extract_leading_blocks(hint)
+    if not blocks:
+        return hint
+
+    out = []
+    cursor = 0
+    for open_idx, close_idx, body in blocks:
+        out.append(hint[cursor:open_idx + 1])  # up to and including '('
+        kind = _classify_leading(body)
+        if kind == "nested":
+            new_body = _normalize_nested_leading(body)
+            out.append(new_body)
+        else:
+            out.append(body)
+        out.append(")")
+        cursor = close_idx + 1
+    out.append(hint[cursor:])
+    return "".join(out)
+
+
 def run_one_proposal(proposal_id: int, label: str, hint: str, sql_content: str, opts: DbOptions):
     """Execute a single proposal (optional hint + SQL) and measure elapsed time in ms."""
+    hint = _fix_leading_hint(hint) if hint else hint
     sql_to_run = f"{hint}\n{sql_content}" if hint else sql_content
     start = time.perf_counter()
     rc, _stdout, stderr = _run_psql_with_capture(sql_to_run, opts)
