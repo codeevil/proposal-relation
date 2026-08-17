@@ -457,6 +457,79 @@ def _run_psql_with_capture(sql: str, opts: DbOptions):
     return result.returncode, result.stdout, result.stderr
 
 
+def _format_hint_error_message(stderr_text: str) -> str:
+    """Re-order pg_hint_plan's stderr output for hint syntax errors.
+
+    pg_hint_plan emits a hint error as a sequence of:
+      INFO:  pg_hint_plan: hint syntax error ...
+      DETAIL:  ...
+      ... (possibly more INFO/DETAIL blocks)
+      NOTICE:  pg_hint_plan:
+      used hint:
+      not used hint:
+      duplication hint:
+      error hint:
+      <one or more lines of the offending hint text>
+
+    Re-organized as:
+      1. The "error hint:" body (joined with spaces)         - dropped if empty
+      2. All DETAIL: lines, in order
+      3. The 2nd, 3rd, ... INFO: lines (i.e. INFO blocks[1:])
+      4. The 1st INFO: line (i.e. INFO blocks[0])
+    Lines are joined with single spaces inside each section.
+    """
+    lines = (stderr_text or "").splitlines()
+
+    info_lines = []   # the actual text after each "INFO:" prefix, in order
+    detail_lines = [] # the actual text after each "DETAIL:" prefix, in order
+    error_hint_body_lines = []  # lines after "error hint:" until next banner / EOF
+
+    i = 0
+    in_notice = False
+    seen_error_hint_header = False
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if stripped.startswith("INFO:") and "pg_hint_plan" in stripped and "hint syntax error" in stripped.lower():
+            info_lines.append(stripped[len("INFO:"):].strip())
+            i += 1
+            continue
+        if stripped.startswith("DETAIL:"):
+            detail_lines.append(stripped[len("DETAIL:"):].strip())
+            i += 1
+            continue
+        if stripped.startswith("NOTICE:") and "pg_hint_plan" in stripped:
+            in_notice = True
+            i += 1
+            continue
+        if in_notice:
+            if stripped == "error hint:":
+                seen_error_hint_header = True
+                i += 1
+                continue
+            if seen_error_hint_header:
+                # Subsequent lines belong to the offending hint text until the
+                # notice block ends (blank line / next banner / EOF).
+                if stripped == "":
+                    i += 1
+                    continue
+                error_hint_body_lines.append(stripped)
+                i += 1
+                continue
+        i += 1
+
+    parts = []
+    if error_hint_body_lines:
+        parts.append(" ".join(error_hint_body_lines))
+    if detail_lines:
+        parts.append(" ".join(detail_lines))
+    if len(info_lines) > 1:
+        parts.append(" ".join(info_lines[1:]))
+    if info_lines:
+        parts.append(info_lines[0])
+    return " | ".join(parts)
+
+
 def run_one_proposal(proposal_id: int, label: str, hint: str, sql_content: str, opts: DbOptions):
     """Execute a single proposal (optional hint + SQL) and measure elapsed time in ms."""
     sql_to_run = f"{hint}\n{sql_content}" if hint else sql_content
@@ -467,13 +540,10 @@ def run_one_proposal(proposal_id: int, label: str, hint: str, sql_content: str, 
     if rc == 0:
         # pg_hint_plan emits hint syntax errors as INFO (not ERROR) and does not
         # change the exit code. Detect these and flag them separately.
-        stderr_clean = stderr.strip() if stderr else ""
-        hint_error_lines = [line for line in stderr_clean.splitlines()
-                            if "pg_hint_plan" in line and ("hint syntax error" in line.lower()
-                                                          or "syntax error" in line.lower())]
-        if hint_error_lines:
+        stderr_text = stderr or ""
+        if "hint syntax error" in stderr_text.lower() and "pg_hint_plan" in stderr_text:
             status = "hint_error"
-            error_msg = " | ".join(hint_error_lines)
+            error_msg = _format_hint_error_message(stderr_text)
             print(f"[HINT_ERROR] {label}: {error_msg}", file=sys.stderr)
         else:
             status = "ok"
@@ -491,7 +561,10 @@ def run_one_proposal(proposal_id: int, label: str, hint: str, sql_content: str, 
                 break
         is_hint_error = "hint syntax error" in stderr_clean.lower()
         status = "hint_error" if is_hint_error else "error"
-        error_msg = first_error or (stderr_clean.splitlines()[0] if stderr_clean else f"psql exit {rc}")
+        if is_hint_error:
+            error_msg = _format_hint_error_message(stderr_clean)
+        else:
+            error_msg = first_error or (stderr_clean.splitlines()[0] if stderr_clean else f"psql exit {rc}")
         print(f"[{status.upper()}] {label}: {error_msg}", file=sys.stderr)
 
     return {
