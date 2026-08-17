@@ -971,8 +971,14 @@ def _parse_proposals_lenient(text: str):
 
 
 def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None,
-                  output_file = None, header: str = None):
-    """Execute baseline + each proposal in the proposals file, print timing table. Returns results."""
+                  output_path: Path = None, output_file = None, header: str = None):
+    """Execute baseline + each proposal in the proposals file, print timing table. Returns results.
+
+    The formatted table is written to ``output_path`` (default
+    ``./data/run_proposals_result.txt``). Pass ``output_file`` for callers that
+    already hold an open file handle (e.g. ``run_proposals_all`` aggregating
+    many tables into one file) — when supplied it overrides ``output_path``.
+    """
     sql_content = sql_path.read_text(encoding="utf-8").strip()
 
     proposals_path = proposals_path or DATA_DIR / f"{sql_path.stem}_proposals.json"
@@ -987,20 +993,37 @@ def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None,
         print(f"[ERROR] Proposals file must be a JSON array", file=sys.stderr)
         sys.exit(1)
 
+    if header is None:
+        header = sql_path.name
+
+    if output_file is None:
+        resolved_output_path = Path(output_path) if output_path else DATA_DIR / "run_proposals_result.txt"
+        resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
+        own_file = open(resolved_output_path, "w", encoding="utf-8")
+        logger.info(f"Summary output: {resolved_output_path}")
+    else:
+        own_file = None
+
     results = []
 
-    logger.info("Running baseline (no hint)...")
-    results.append(run_one_proposal(0, "baseline", "", sql_content, opts))
+    try:
+        logger.info("Running baseline (no hint)...")
+        results.append(run_one_proposal(0, "baseline", "", sql_content, opts))
 
-    for p in proposals:
-        pid = p.get("proposal_id")
-        hint = p.get("hint_combination") or ""
-        label = f"proposal_{pid}"
-        logger.info(f"Running {label}...")
-        results.append(run_one_proposal(pid, label, hint, sql_content, opts))
-        time.sleep(opts.sleep)
+        for p in proposals:
+            pid = p.get("proposal_id")
+            hint = p.get("hint_combination") or ""
+            label = f"proposal_{pid}"
+            logger.info(f"Running {label}...")
+            results.append(run_one_proposal(pid, label, hint, sql_content, opts))
+            time.sleep(opts.sleep)
 
-    _print_results_table(results, header=header, output_file=output_file)
+        sink = output_file if output_file is not None else own_file
+        _print_results_table(results, header=header, output_file=sink)
+    finally:
+        if own_file is not None:
+            own_file.close()
+            print(f"[INFO] Summary written to: {resolved_output_path}")
     return results
 
 
@@ -1011,7 +1034,8 @@ def cmd_run_proposals(args):
         sys.exit(1)
     opts = DbOptions(host=args.host, port=args.port, user=args.user,
                      database=args.database, sleep=args.sleep)
-    run_proposals(sql_path, opts, proposals_path=args.proposals)
+    run_proposals(sql_path, opts, proposals_path=args.proposals,
+                  output_path=args.output)
 
 
 def gen_stat(sql_path: Path, opts: DbOptions, output_path: Path = None) -> Path:
@@ -1221,6 +1245,8 @@ def main():
                                  help="Path to proposals JSON file (default: ./data/{sql_stem}_proposals.json)")
     p_run_proposals.add_argument("--sleep", type=float, default=3.0,
                                  help="Seconds to sleep between proposals (default: 3.0)")
+    p_run_proposals.add_argument("--output", type=str, default=None,
+                                 help="Summary table output file path (default: ./data/run_proposals_result.txt)")
     p_run_proposals.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
     p_run_proposals.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
     p_run_proposals.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
