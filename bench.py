@@ -503,7 +503,7 @@ def run_one_proposal(proposal_id: int, label: str, hint: str, sql_content: str, 
     }
 
 
-def _print_results_table(results):
+def _print_results_table(results, header: str = None, output_file = None):
     baseline_ms = None
     for r in results:
         if r["label"] == "baseline" and r["status"] == "ok":
@@ -540,12 +540,20 @@ def _print_results_table(results):
     widths = [max(len(str(row[i])) for row in [headers] + rows) for i in range(len(headers))]
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
     sep = "  ".join("-" * w for w in widths)
-    print()
-    print(fmt.format(*headers))
-    print(sep)
+
+    def _emit(line: str):
+        print(line)
+        if output_file is not None:
+            output_file.write(line + "\n")
+
+    _emit("")
+    if header:
+        _emit(f"=== {header} ===")
+    _emit(fmt.format(*headers))
+    _emit(sep)
     for row in rows:
-        print(fmt.format(*row))
-    print()
+        _emit(fmt.format(*row))
+    _emit("")
 
 
 def _strip_markdown_fence(text: str) -> str:
@@ -559,7 +567,8 @@ def _strip_markdown_fence(text: str) -> str:
     return text.strip()
 
 
-def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None):
+def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None,
+                  output_file = None, header: str = None):
     """Execute baseline + each proposal in the proposals file, print timing table. Returns results."""
     sql_content = sql_path.read_text(encoding="utf-8").strip()
 
@@ -586,7 +595,7 @@ def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None):
         results.append(run_one_proposal(pid, label, hint, sql_content, opts))
         time.sleep(opts.sleep)
 
-    _print_results_table(results)
+    _print_results_table(results, header=header, output_file=output_file)
     return results
 
 
@@ -652,7 +661,7 @@ def gen_proposals(sql_path: Path, opts: DbOptions, stat_path: Path = None,
     return output_path
 
 
-def run_one_query(sql_path: Path, opts: DbOptions) -> None:
+def run_one_query(sql_path: Path, opts: DbOptions, output_file = None) -> None:
     """Full pipeline for a single SQL file: explain -> stat -> proposals -> run."""
     sql_path = Path(sql_path)
     logger.info(f"=== Processing {sql_path.name} ===")
@@ -667,7 +676,8 @@ def run_one_query(sql_path: Path, opts: DbOptions) -> None:
     proposals_path = gen_proposals(sql_path, opts, stat_path=stat_path, explain_path=explain_path)
 
     logger.info("Step 4/4: Running proposals ...")
-    run_proposals(sql_path, opts, proposals_path=proposals_path)
+    run_proposals(sql_path, opts, proposals_path=proposals_path,
+                  output_file=output_file, header=sql_path.name)
 
 
 def cmd_run_one_query(args):
@@ -686,7 +696,7 @@ def discover_sql_files(directory: Path):
     return sorted(directory.rglob("*.sql"))
 
 
-def run_queries(directory: Path, opts: DbOptions) -> None:
+def run_queries(directory: Path, opts: DbOptions, output_path: Path = None) -> None:
     """Run the full pipeline for every SQL file under directory (recursive)."""
     directory = Path(directory)
     if not directory.is_dir():
@@ -698,21 +708,30 @@ def run_queries(directory: Path, opts: DbOptions) -> None:
         print(f"[WARNING] No .sql files found under {directory}")
         return
 
+    output_path = Path(output_path) if output_path else DATA_DIR / "run_queries_result.txt"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_file = open(output_path, "w", encoding="utf-8")
+
     logger.info(f"Found {len(sql_files)} SQL file(s) under {directory}")
-    for i, sql_path in enumerate(sql_files, 1):
-        logger.info(f"--- [{i}/{len(sql_files)}] {sql_path} ---")
-        try:
-            run_one_query(sql_path, opts)
-        except Exception as e:
-            logger.error(f"Failed to process {sql_path}: {e}")
-        if i < len(sql_files):
-            time.sleep(opts.sleep)
+    logger.info(f"Summary output: {output_path}")
+    try:
+        for i, sql_path in enumerate(sql_files, 1):
+            logger.info(f"--- [{i}/{len(sql_files)}] {sql_path} ---")
+            try:
+                run_one_query(sql_path, opts, output_file=output_file)
+            except Exception as e:
+                logger.error(f"Failed to process {sql_path}: {e}")
+            if i < len(sql_files):
+                time.sleep(opts.sleep)
+    finally:
+        output_file.close()
+    print(f"[INFO] Summary written to: {output_path}")
 
 
 def cmd_run_queries(args):
     opts = DbOptions(host=args.host, port=args.port, user=args.user,
                      database=args.database, sleep=args.sleep)
-    run_queries(Path(args.dir), opts)
+    run_queries(Path(args.dir), opts, output_path=args.output)
 
 
 def main():
@@ -767,6 +786,8 @@ def main():
     # run_queries
     p_run_queries = subparsers.add_parser("run_queries", help="Full pipeline for every SQL file in a directory")
     p_run_queries.add_argument("--dir", type=str, required=True, help="Directory containing SQL files (recursive)")
+    p_run_queries.add_argument("--output", type=str, default=None,
+                               help="Summary table output file path (default: ./data/run_queries_result.txt)")
     p_run_queries.add_argument("--sleep", type=float, default=3.0,
                                help="Seconds to sleep between queries (default: 3.0)")
     p_run_queries.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
