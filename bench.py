@@ -409,7 +409,8 @@ def cmd_gen_explain(args):
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    explain_output = run_psql(f"EXPLAIN ANALYZE {sql_content}", db=args.database,
+    # explain_output = run_psql(f"EXPLAIN ANALYZE {sql_content}", db=args.database,
+    explain_output = run_psql(f"EXPLAIN {sql_content}", db=args.database,
                               host=args.host, port=args.port, user=args.user)
 
     output_path = Path(args.output) if args.output else DATA_DIR / f"{sql_path.stem}_explain.txt"
@@ -434,14 +435,24 @@ def gen_explain(sql_path: Path, opts: DbOptions, output_path: Path = None) -> Pa
 
 def _run_psql_with_capture(sql: str, opts: DbOptions):
     """Run psql and return (returncode, stdout, stderr). Does not exit on error."""
-    result = subprocess.run(
-        [PSQL_BIN, "-h", opts.host, "-p", str(opts.port), "-U", opts.user, "-d", opts.database,
-         "-X", "-A", "-t", "-q", "--no-psqlrc", "-v", "ON_ERROR_STOP=1"],
-        input=sql,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
+    try:
+        result = subprocess.run(
+            [PSQL_BIN, "-h", opts.host, "-p", str(opts.port), "-U", opts.user, "-d", opts.database,
+             "-X", "-A", "-t", "-q", "--no-psqlrc", "-v", "ON_ERROR_STOP=1"],
+            input=sql,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired as e:
+        def _to_str(b):
+            return b.decode("utf-8", errors="replace") if isinstance(b, bytes) else (b or "")
+        extra = _to_str(e.stderr).strip()
+        msg = "query execution exceeded 60s timeout (killed)"
+        if extra:
+            msg = f"{msg}: {extra}"
+        return -1, _to_str(e.stdout), msg
     return result.returncode, result.stdout, result.stderr
 
 
@@ -466,6 +477,10 @@ def run_one_proposal(proposal_id: int, label: str, hint: str, sql_content: str, 
         else:
             status = "ok"
             error_msg = ""
+    elif rc == -1:
+        status = "timeout"
+        error_msg = stderr.strip() if stderr else "query execution exceeded 60s timeout (killed)"
+        print(f"[TIMEOUT] {label}: {error_msg}", file=sys.stderr)
     else:
         stderr_clean = stderr.strip() if stderr else ""
         first_error = ""
@@ -505,6 +520,12 @@ def _print_results_table(results):
         elif r["status"] == "hint_error":
             elapsed = f"{r['elapsed_ms']:.2f}"
             speedup = f"{baseline_ms / r['elapsed_ms']:.2f}x" if baseline_ms else "N/A"
+            err = r.get("error_msg", "")
+            if len(err) > 60:
+                err = err[:57] + "..."
+        elif r["status"] == "timeout":
+            elapsed = "timeout"
+            speedup = "N/A"
             err = r.get("error_msg", "")
             if len(err) > 60:
                 err = err[:57] + "..."
