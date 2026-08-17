@@ -907,6 +907,56 @@ def cmd_run_queries(args):
     run_queries(Path(args.dir), opts, output_path=args.output)
 
 
+def run_proposals_all(directory: Path, opts: DbOptions, output_path: Path = None) -> None:
+    """For each .sql file under directory (recursive), call run_proposals and
+    print/save a timing table prefixed with the SQL file's basename.
+
+    Reuses ``discover_sql_files`` for recursive lookup and ``run_proposals`` for
+    per-file benchmarking. Differs from ``run_queries`` in that it does NOT
+    regenerate explain/stat/proposals — it assumes those artifacts already exist
+    in ``./data/`` (i.e. steps 1–3 have been done previously, e.g. by a prior
+    ``run_queries`` pass).
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        print(f"[ERROR] Directory not found: {directory}", file=sys.stderr)
+        sys.exit(1)
+
+    sql_files = discover_sql_files(directory)
+    if not sql_files:
+        print(f"[WARNING] No .sql files found under {directory}")
+        return
+
+    output_path = Path(output_path) if output_path else DATA_DIR / "run_proposals_all_result.txt"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_file = open(output_path, "w", encoding="utf-8")
+
+    logger.info(f"Found {len(sql_files)} SQL file(s) under {directory}")
+    logger.info(f"Summary output: {output_path}")
+    try:
+        for i, sql_path in enumerate(sql_files, 1):
+            logger.info(f"--- [{i}/{len(sql_files)}] {sql_path.name} ---")
+            try:
+                run_proposals(sql_path, opts, output_file=output_file, header=sql_path.name)
+            except SystemExit:
+                # run_proposals exits on missing/invalid proposals file; surface
+                # the error but keep processing the remaining files.
+                logger.error(f"Failed to process {sql_path}: see error above")
+            except Exception as e:
+                logger.error(f"Failed to process {sql_path}: {e}")
+            if i < len(sql_files):
+                time.sleep(opts.sleep)
+    finally:
+        output_file.close()
+    print(f"[INFO] Summary written to: {output_path}")
+
+
+def cmd_run_proposals_all(args):
+    opts = DbOptions(host=args.host, port=args.port, user=args.user,
+                      database=args.database, sleep=args.sleep)
+    run_proposals_all(Path(args.dir), opts, output_path=args.output)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Benchmark utilities")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -968,6 +1018,22 @@ def main():
     p_run_queries.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
     p_run_queries.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
     p_run_queries.set_defaults(func=cmd_run_queries)
+
+    # run_proposals_all
+    p_run_proposals_all = subparsers.add_parser(
+        "run_proposals_all",
+        help="Run run_proposals for every SQL file in a directory (recursive); does NOT regenerate explain/stat/proposals",
+    )
+    p_run_proposals_all.add_argument("--dir", type=str, required=True, help="Directory containing SQL files (recursive)")
+    p_run_proposals_all.add_argument("--output", type=str, default=None,
+                                     help="Summary table output file path (default: ./data/run_proposals_all_result.txt)")
+    p_run_proposals_all.add_argument("--sleep", type=float, default=3.0,
+                                     help="Seconds to sleep between SQL files (default: 3.0)")
+    p_run_proposals_all.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
+    p_run_proposals_all.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
+    p_run_proposals_all.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
+    p_run_proposals_all.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
+    p_run_proposals_all.set_defaults(func=cmd_run_proposals_all)
 
     args = parser.parse_args()
     args.func(args)
