@@ -1,0 +1,617 @@
+{
+  "sql_info": {
+    "original_sql": "",
+    "schema": "public",
+    "extracted_tables": [
+      {
+        "table_name": "store_sales",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "store",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "customer_demographics",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "household_demographics",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "customer_address",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "date_dim",
+        "schema_name": "public",
+        "alias": null
+      }
+    ]
+  },
+  "tables": {
+    "public.store_sales": {
+      "table_metadata": {
+        "relname": "store_sales",
+        "relnamespace": "public",
+        "reltuples": 28799536,
+        "relpages": 512193,
+        "relallvisible": 512193
+      },
+      "indexes": [
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k10_k3",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_ticket_number",
+            "ss_item_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_net_profit",
+            "ss_sales_price",
+            "ss_hdemo_sk",
+            "ss_store_sk",
+            "ss_cdemo_sk",
+            "ss_addr_sk",
+            "ss_item_sk",
+            "ss_customer_sk",
+            "ss_promo_sk",
+            "ss_ticket_number",
+            "ss_quantity",
+            "ss_wholesale_cost",
+            "ss_list_price",
+            "ss_ext_sales_price",
+            "ss_ext_wholesale_cost",
+            "ss_coupon_amt"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k3_11_13",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_item_sk",
+            "ss_quantity",
+            "ss_list_price"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k3_k10_k4_k8_23",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_item_sk",
+            "ss_ticket_number",
+            "ss_customer_sk",
+            "ss_store_sk",
+            "ss_net_profit"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k3_k10_k4_k8_9_16_23",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_item_sk",
+            "ss_ticket_number",
+            "ss_customer_sk",
+            "ss_store_sk",
+            "ss_promo_sk",
+            "ss_ext_sales_price",
+            "ss_net_profit"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k3_k7_16",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_item_sk",
+            "ss_addr_sk",
+            "ss_ext_sales_price"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k4_k3_k10",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_customer_sk",
+            "ss_item_sk",
+            "ss_ticket_number"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k5_k8_k3_11_13_14_20",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_cdemo_sk",
+            "ss_store_sk",
+            "ss_item_sk",
+            "ss_quantity",
+            "ss_list_price",
+            "ss_sales_price",
+            "ss_coupon_amt"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k7_k3_16",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_addr_sk",
+            "ss_item_sk",
+            "ss_ext_sales_price"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k1_k8_3_14_16",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_sold_date_sk",
+            "ss_store_sk",
+            "ss_item_sk",
+            "ss_sales_price",
+            "ss_ext_sales_price"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k3_k10_k4",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_item_sk",
+            "ss_ticket_number",
+            "ss_customer_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k3_k10_k4_k1_k8",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_item_sk",
+            "ss_ticket_number",
+            "ss_customer_sk",
+            "ss_sold_date_sk",
+            "ss_store_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k4_1_3_10_11_14",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_customer_sk",
+            "ss_sold_date_sk",
+            "ss_item_sk",
+            "ss_ticket_number",
+            "ss_quantity",
+            "ss_sales_price"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_sales_6_1333579789__k4_k1_16",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_customer_sk",
+            "ss_sold_date_sk",
+            "ss_ext_sales_price"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "store_sales_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "ss_item_sk",
+            "ss_ticket_number"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "ss_addr_sk": {
+          "attname": "ss_addr_sk",
+          "n_distinct": 89486.0,
+          "null_frac": 0.043966666
+        },
+        "ss_cdemo_sk": {
+          "attname": "ss_cdemo_sk",
+          "n_distinct": 104099.0,
+          "null_frac": 0.045
+        },
+        "ss_ext_sales_price": {
+          "attname": "ss_ext_sales_price",
+          "n_distinct": 78869.0,
+          "null_frac": 0.043533333
+        },
+        "ss_ext_wholesale_cost": {
+          "attname": "ss_ext_wholesale_cost",
+          "n_distinct": 1991.0,
+          "null_frac": 0.0433
+        },
+        "ss_hdemo_sk": {
+          "attname": "ss_hdemo_sk",
+          "n_distinct": 5416.0,
+          "null_frac": 0.0448
+        },
+        "ss_net_profit": {
+          "attname": "ss_net_profit",
+          "n_distinct": 116433.0,
+          "null_frac": 0.0435
+        },
+        "ss_quantity": {
+          "attname": "ss_quantity",
+          "n_distinct": 100.0,
+          "null_frac": 0.0433
+        },
+        "ss_sales_price": {
+          "attname": "ss_sales_price",
+          "n_distinct": 4791.0,
+          "null_frac": 0.044466667
+        },
+        "ss_sold_date_sk": {
+          "attname": "ss_sold_date_sk",
+          "n_distinct": 2053.0,
+          "null_frac": 0.044033334
+        },
+        "ss_store_sk": {
+          "attname": "ss_store_sk",
+          "n_distinct": 30.0,
+          "null_frac": 0.0444
+        }
+      }
+    },
+    "public.store": {
+      "table_metadata": {
+        "relname": "store",
+        "relnamespace": "public",
+        "reltuples": 102,
+        "relpages": 5,
+        "relallvisible": 0
+      },
+      "indexes": [
+        {
+          "index_name": "_dta_index_store_6_885578193__k1_2_6",
+          "index_type": "btree",
+          "index_columns": [
+            "s_store_sk",
+            "s_store_id",
+            "s_store_name"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_store_6_885578193__k25_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "s_state",
+            "s_store_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "store_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "s_store_sk"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "s_store_sk": {
+          "attname": "s_store_sk",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.customer_demographics": {
+      "table_metadata": {
+        "relname": "customer_demographics",
+        "relnamespace": "public",
+        "reltuples": 1920800,
+        "relpages": 21828,
+        "relallvisible": 21828
+      },
+      "indexes": [
+        {
+          "index_name": "customer_demographics_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "cd_demo_sk"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "cd_demo_sk": {
+          "attname": "cd_demo_sk",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "cd_education_status": {
+          "attname": "cd_education_status",
+          "n_distinct": 7.0,
+          "null_frac": 0.0
+        },
+        "cd_marital_status": {
+          "attname": "cd_marital_status",
+          "n_distinct": 5.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.household_demographics": {
+      "table_metadata": {
+        "relname": "household_demographics",
+        "relnamespace": "public",
+        "reltuples": 7200,
+        "relpages": 53,
+        "relallvisible": 53
+      },
+      "indexes": [
+        {
+          "index_name": "household_demographics_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "hd_demo_sk"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "hd_demo_sk": {
+          "attname": "hd_demo_sk",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "hd_dep_count": {
+          "attname": "hd_dep_count",
+          "n_distinct": 10.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.customer_address": {
+      "table_metadata": {
+        "relname": "customer_address",
+        "relnamespace": "public",
+        "reltuples": 250000,
+        "relpages": 5417,
+        "relallvisible": 5417
+      },
+      "indexes": [
+        {
+          "index_name": "customer_address_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "ca_address_sk"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "ca_address_sk": {
+          "attname": "ca_address_sk",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "ca_country": {
+          "attname": "ca_country",
+          "n_distinct": 1.0,
+          "null_frac": 0.029533334
+        },
+        "ca_state": {
+          "attname": "ca_state",
+          "n_distinct": 51.0,
+          "null_frac": 0.029066667
+        }
+      }
+    },
+    "public.date_dim": {
+      "table_metadata": {
+        "relname": "date_dim",
+        "relnamespace": "public",
+        "reltuples": 73049,
+        "relpages": 1405,
+        "relallvisible": 1405
+      },
+      "indexes": [
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k1_k7_k9",
+          "index_type": "btree",
+          "index_columns": [
+            "d_date_sk",
+            "d_year",
+            "d_moy"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k4_1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_month_seq",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k4_k3",
+          "index_type": "btree",
+          "index_columns": [
+            "d_month_seq",
+            "d_date"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k7_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_year",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k7_k11_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_year",
+            "d_qoy",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k7_k4_k9_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_year",
+            "d_month_seq",
+            "d_moy",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k7_k9",
+          "index_type": "btree",
+          "index_columns": [
+            "d_year",
+            "d_moy"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k7_k9_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_year",
+            "d_moy",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "_dta_index_date_dim_6_661577395__k9_k7_k1",
+          "index_type": "btree",
+          "index_columns": [
+            "d_moy",
+            "d_year",
+            "d_date_sk"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "date_dim_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "d_date_sk"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "d_date_sk": {
+          "attname": "d_date_sk",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "d_year": {
+          "attname": "d_year",
+          "n_distinct": 200.0,
+          "null_frac": 0.0
+        }
+      }
+    }
+  }
+}

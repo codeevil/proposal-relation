@@ -69,7 +69,6 @@ class PgMetadataCollector:
                 "original_sql": "",
                 "schema": "public",
                 "extracted_tables": [],
-                "extracted_columns": {},
             },
             "tables": {},
         }
@@ -81,7 +80,7 @@ class PgMetadataCollector:
         except Exception as e:
             raise RuntimeError(f"SQL parse failed: {e}")
 
-        self.result["sql_info"]["original_sql"] = sql_text.strip()
+        self.result["sql_info"]["original_sql"] = ""
 
         # Extract all CTE aliases to skip when collecting base tables
         cte_aliases = set()
@@ -156,7 +155,6 @@ class PgMetadataCollector:
                 extracted_columns[f"{self.default_schema}.{tbl_key}"] = sorted(cols)
 
         self.result["sql_info"]["extracted_tables"] = extracted_tables
-        self.result["sql_info"]["extracted_columns"] = extracted_columns
         return extracted_tables, extracted_columns
 
     def _resolve_columns_to_tables(self, tbl_names, tbl_schemas, col_names):
@@ -229,9 +227,7 @@ class PgMetadataCollector:
                    n.nspname AS relnamespace,
                    c.reltuples::bigint,
                    c.relpages,
-                   c.relallvisible,
-                   c.relkind,
-                   pg_table_size(c.oid) AS size_bytes
+                   c.relallvisible
             FROM pg_class c
             JOIN pg_namespace n ON c.relnamespace = n.oid
             WHERE n.nspname = %s AND c.relname = %s
@@ -247,19 +243,15 @@ class PgMetadataCollector:
             "reltuples": row["reltuples"] if row["reltuples"] is not None else 0,
             "relpages": row["relpages"] if row["relpages"] is not None else 0,
             "relallvisible": row["relallvisible"] if row["relallvisible"] is not None else 0,
-            "relkind": row["relkind"],
-            "size_bytes": row["size_bytes"] if row["size_bytes"] is not None else 0,
         }
 
     def collect_indexes(self, schema: str, table: str) -> list:
         query = """
             SELECT i.relname AS index_name,
-                   pg_get_indexdef(idx.indexrelid) AS index_def,
                    am.amname AS index_type,
                    idx.indisunique,
                    idx.indisprimary,
                    idx.indpred IS NOT NULL AS is_partial,
-                   pg_relation_size(idx.indexrelid) AS size_bytes,
                    array_agg(a.attname ORDER BY unnest_pos) AS index_columns
             FROM pg_index idx
             JOIN pg_class i ON idx.indexrelid = i.oid
@@ -279,58 +271,14 @@ class PgMetadataCollector:
         return [
             {
                 "index_name": r["index_name"],
-                "index_def": r["index_def"],
                 "index_type": r["index_type"],
                 "index_columns": r["index_columns"],
                 "is_unique": r["indisunique"],
                 "is_primary": r["indisprimary"],
                 "is_partial": r["is_partial"],
-                "size_bytes": r["size_bytes"] if r["size_bytes"] is not None else 0,
             }
             for r in rows
         ]
-
-    def collect_constraints(self, schema: str, table: str) -> list:
-        query = """
-            SELECT conname AS constraint_name,
-                   contype AS constraint_type,
-                   pg_get_constraintdef(con.oid) AS constraint_def,
-                   conkey,
-                   confrelid::regclass::text AS foreign_table
-            FROM pg_constraint con
-            JOIN pg_class c ON con.conrelid = c.oid
-            JOIN pg_namespace n ON c.relnamespace = n.oid
-            WHERE n.nspname = %s AND c.relname = %s
-            ORDER BY conname
-        """
-        with self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(query, (schema, table))
-            rows = cur.fetchall()
-        result = []
-        for r in rows:
-            columns = []
-            if r["conkey"]:
-                # Resolve attnum to column names
-                col_query = """
-                    SELECT a.attname FROM pg_attribute a
-                    JOIN pg_class c ON a.attrelid = c.oid
-                    JOIN pg_namespace n ON c.relnamespace = n.oid
-                    WHERE n.nspname = %s AND c.relname = %s
-                      AND a.attnum = ANY(%s)
-                      AND a.attnum > 0 AND NOT a.attisdropped
-                    ORDER BY a.attnum
-                """
-                with self.conn.cursor() as cur2:
-                    cur2.execute(col_query, (schema, table, r["conkey"]))
-                    columns = [row[0] for row in cur2.fetchall()]
-            result.append({
-                "constraint_name": r["constraint_name"],
-                "constraint_type": r["constraint_type"],
-                "constraint_def": r["constraint_def"],
-                "related_columns": columns,
-                "foreign_table": r["foreign_table"] if r["constraint_type"] == "f" else None,
-            })
-        return result
 
     def collect_column_statistics(self, schema: str, table: str, columns: list = None) -> dict:
         if columns is None:
@@ -342,11 +290,7 @@ class PgMetadataCollector:
         result = {}
         for col in col_names:
             query = """
-                SELECT attname, n_distinct, null_frac, avg_width,
-                       most_common_vals::text,
-                       most_common_freqs::text,
-                       histogram_bounds::text,
-                       correlation
+                SELECT attname, n_distinct, null_frac
                 FROM pg_stats
                 WHERE schemaname = %s AND tablename = %s AND attname = %s
             """
@@ -356,18 +300,10 @@ class PgMetadataCollector:
             if not row:
                 result[col] = None
                 continue
-            mcv = self._parse_pg_array(row["most_common_vals"])
-            mcf = self._parse_pg_array(row["most_common_freqs"])
-            hb = self._parse_pg_array(row["histogram_bounds"])
             result[col] = {
                 "attname": row["attname"],
                 "n_distinct": row["n_distinct"] if row["n_distinct"] is not None else None,
                 "null_frac": row["null_frac"] if row["null_frac"] is not None else None,
-                "avg_width": row["avg_width"] if row["avg_width"] is not None else None,
-                "most_common_vals": mcv if mcv else None,
-                "most_common_freqs": mcf if mcf else None,
-                "histogram_bounds": hb if hb else None,
-                "correlation": row["correlation"] if row["correlation"] is not None else None,
             }
         return result
 
@@ -436,7 +372,6 @@ class PgMetadataCollector:
 
             table_meta = self.collect_table_metadata(schema, table)
             indexes = self.collect_indexes(schema, table)
-            constraints = self.collect_constraints(schema, table)
 
             # Collect column statistics only for columns involved in the SQL
             sql_columns = extracted_columns.get(full_name, [])
@@ -448,7 +383,6 @@ class PgMetadataCollector:
             self.result["tables"][full_name] = {
                 "table_metadata": table_meta,
                 "indexes": indexes,
-                "constraints": constraints,
                 "column_statistics": col_stats,
             }
 
