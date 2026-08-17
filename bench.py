@@ -397,41 +397,36 @@ class PgMetadataCollector:
         logger.info(f"JSON output written to: {path}")
 
 
+def gen_explain(sql_path: Path, opts: DbOptions, output_path: Path = None) -> Path:
+    """Run EXPLAIN ANALYZE for a SQL file and write the output to disk.
+
+    Returns the resolved output path. The caller is expected to have already
+    validated the SQL file's existence and non-empty content.
+    """
+    sql_content = sql_path.read_text(encoding="utf-8").strip()
+    explain_output = run_psql(f"EXPLAIN ANALYZE {sql_content}", db=opts.database,
+                              host=opts.host, port=opts.port, user=opts.user)
+
+    output_path = Path(output_path) if output_path else DATA_DIR / f"{sql_path.stem}_explain.txt"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(explain_output, encoding="utf-8")
+    logger.info(f"EXPLAIN ANALYZE written to: {output_path}")
+    return output_path
+
+
 def cmd_gen_explain(args):
     sql_path = Path(args.sql)
     if not sql_path.exists():
         print(f"[ERROR] SQL file not found: {sql_path}", file=sys.stderr)
         sys.exit(1)
-
-    sql_content = sql_path.read_text(encoding="utf-8").strip()
-    if not sql_content:
+    if not sql_path.read_text(encoding="utf-8").strip():
         print(f"[ERROR] SQL file is empty: {sql_path}", file=sys.stderr)
         sys.exit(1)
 
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-    # explain_output = run_psql(f"EXPLAIN ANALYZE {sql_content}", db=args.database,
-    explain_output = run_psql(f"EXPLAIN {sql_content}", db=args.database,
-                              host=args.host, port=args.port, user=args.user)
-
-    output_path = Path(args.output) if args.output else DATA_DIR / f"{sql_path.stem}_explain.txt"
-    output_path.write_text(explain_output, encoding="utf-8")
-
-    print(f"[INFO] EXPLAIN ANALYZE written to: {output_path}")
-
-
-def gen_explain(sql_path: Path, opts: DbOptions, output_path: Path = None) -> Path:
-    """Generate EXPLAIN ANALYZE output file for a SQL file. Returns output path."""
-    sql_content = sql_path.read_text(encoding="utf-8").strip()
-    explain_output = run_psql(f"EXPLAIN ANALYZE {sql_content}", db=opts.database,
-                              host=opts.host, port=opts.port, user=opts.user)
-
-    output_path = output_path or DATA_DIR / f"{sql_path.stem}_explain.txt"
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(explain_output, encoding="utf-8")
-    logger.info(f"[INFO] EXPLAIN ANALYZE written to: {output_path}")
-    return output_path
+    opts = DbOptions(host=args.host, port=args.port, user=args.user, database=args.database)
+    output_path = Path(args.output) if args.output else None
+    gen_explain(sql_path, opts, output_path=output_path)
+    print(f"[INFO] EXPLAIN ANALYZE written to: {output_path or (DATA_DIR / f'{sql_path.stem}_explain.txt')}")
 
 
 def _run_psql_with_capture(sql: str, opts: DbOptions):
