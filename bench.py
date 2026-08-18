@@ -652,12 +652,15 @@ def _extract_leading_blocks(hint: str) -> list:
 def _classify_leading(body: str) -> str:
     """Classify a ``Leading`` body as ``"left_deep"``, ``"nested"``, or ``"invalid"``.
 
-    - ``left_deep``: top-level tokens are all bare identifiers (no parens).
-    - ``nested``: top-level tokens are all parenthesised subtrees (one paren
-      group each), forming a bushy tree. Per pg_hint_plan syntax this MUST be
-      wrapped in an additional outer paren pair — so a valid nested body
-      starts with '(' and ends with ')'.
-    - ``invalid``: mixed tokens, empty body, or unbalanced parens.
+    - ``left_deep``: a flat list of >=3 bare table identifiers, possibly wrapped
+      in zero or more redundant outer paren pairs. E.g. ``a b c``,
+      ``(a b c)``, ``((a b c))``.
+    - ``nested``: a bushy tree of >=2 sibling parenthesised subtrees, either
+      with the required outer wrap ``((a b) (c d))`` or without it
+      ``(a b) (c d)``.
+    - ``invalid``: mixed tokens, unbalanced parens, <3 tables for left-deep,
+      or any shape this classifier does not recognise (pass through unchanged
+      and let pg_hint_plan surface a hint_error).
     """
     body = body.strip()
     if not body:
@@ -665,8 +668,7 @@ def _classify_leading(body: str) -> str:
     if not _is_balanced(body):
         return "invalid"
 
-    top_level = _split_top_level(body, " ")
-    top_level = [t for t in top_level if t.strip()]
+    top_level = [t.strip() for t in _split_top_level(body, " ") if t.strip()]
     if not top_level:
         return "invalid"
 
@@ -678,11 +680,58 @@ def _classify_leading(body: str) -> str:
         t = tok.strip()
         return bool(t) and "(" not in t and ")" not in t
 
-    if all(_is_group(t) for t in top_level):
-        return "nested"
+    # All bare identifiers at top level -> left-deep core (no redundant parens).
     if all(_is_bare(t) for t in top_level):
-        return "left_deep"
+        return "left_deep" if len(top_level) >= 3 else "invalid"
+
+    # >=2 sibling parenthesised groups at top level -> nested WITHOUT outer wrap.
+    if len(top_level) >= 2 and all(_is_group(t) for t in top_level):
+        return "nested"
+
+    # Single parenthesised group at top level -> inspect its content to
+    # distinguish left-deep-with-redundant-parens from nested-with-outer-wrap.
+    if len(top_level) == 1 and _is_group(top_level[0]):
+        inner = top_level[0][1:-1].strip()
+        inner_top = [t.strip() for t in _split_top_level(inner, " ") if t.strip()]
+        # Inner is all bare -> left-deep with redundant outer parens.
+        if inner_top and all(_is_bare(t) for t in inner_top):
+            return "left_deep" if len(inner_top) >= 3 else "invalid"
+        # Inner is multiple sibling groups -> nested with outer wrap (correct).
+        if len(inner_top) >= 2 and all(_is_group(t) for t in inner_top):
+            return "nested"
+        # Inner is itself a single group -> deeper nesting; recurse to classify
+        # the inner content (handles ((a b c)), (((a b) (c d))), etc.).
+        if len(inner_top) == 1 and _is_group(inner_top[0]):
+            return _classify_leading(inner)
+        return "invalid"
+
     return "invalid"
+
+
+def _normalize_left_deep_leading(body: str) -> str:
+    """Strip redundant outer paren pairs from a left-deep ``Leading`` body.
+
+    A left-deep tree (>=3 tables) must have NO extra paren pairs in the body;
+    the only parens around the table list are ``Leading(...)``'s own. E.g.
+    ``((a b c))`` -> ``a b c``, ``(a b c)`` -> ``a b c``, ``a b c`` -> ``a b c``.
+
+    Only called on bodies already classified as ``left_deep``; safe no-op for
+    a bare core. Peeling stops as soon as the outer paren no longer wraps the
+    whole body (so it never touches a genuinely nested structure).
+    """
+    stripped = body.strip()
+    while stripped.startswith("(") and stripped.endswith(")"):
+        # Ensure the leading '(' actually matches the very last ')': if the
+        # match lands earlier, the outer parens don't wrap the whole body and
+        # peeling would corrupt a nested subtree.
+        match_idx = _find_balanced_paren(stripped, 0)
+        if match_idx != len(stripped) - 1:
+            break
+        inner = stripped[1:-1].strip()
+        if not _is_balanced(inner):
+            break
+        stripped = inner
+    return stripped
 
 
 def _normalize_nested_leading(body: str) -> str:
@@ -730,6 +779,10 @@ def _fix_leading_hint(hint: str) -> str:
     """Walk a hint string, normalise every ``Leading(...)`` block.
 
     Currently performs:
+      - left_deep Leading: strips redundant outer paren pairs so the body is
+        a flat list of bare identifiers (the ``Leading(a b c)`` form). Catches
+        ``Leading((a b c))`` / ``Leading(((a b c)))`` and reduces them to
+        ``Leading(a b c)``.
       - nested Leading: adds the required outer paren wrap if missing.
 
     Returns the (possibly rewritten) hint string. Designed to be extensible:
@@ -745,11 +798,13 @@ def _fix_leading_hint(hint: str) -> str:
     for open_idx, close_idx, body in blocks:
         out.append(hint[cursor:open_idx + 1])  # up to and including '('
         kind = _classify_leading(body)
-        if kind == "nested":
+        if kind == "left_deep":
+            new_body = _normalize_left_deep_leading(body)
+        elif kind == "nested":
             new_body = _normalize_nested_leading(body)
-            out.append(new_body)
         else:
-            out.append(body)
+            new_body = body
+        out.append(new_body)
         out.append(")")
         cursor = close_idx + 1
     out.append(hint[cursor:])
