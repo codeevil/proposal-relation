@@ -1,30 +1,30 @@
-Finalize Aggregate  (cost=240980.57..240980.58 rows=1 width=24) (actual time=7171.051..7231.048 rows=1 loops=1)
-  ->  Gather  (cost=240980.44..240980.55 rows=1 width=24) (actual time=3204.220..7231.034 rows=2 loops=1)
+Finalize Aggregate  (cost=240980.57..240980.58 rows=1 width=24) (actual time=4539.499..4603.360 rows=1 loops=1)
+  ->  Gather  (cost=240980.44..240980.55 rows=1 width=24) (actual time=2348.343..4603.342 rows=2 loops=1)
         Workers Planned: 1
         Workers Launched: 1
-        ->  Partial Aggregate  (cost=239980.44..239980.45 rows=1 width=24) (actual time=5182.268..5182.280 rows=1 loops=2)
-              ->  Nested Loop  (cost=239257.68..239980.43 rows=1 width=24) (actual time=5182.263..5182.275 rows=0 loops=2)
+        ->  Partial Aggregate  (cost=239980.44..239980.45 rows=1 width=24) (actual time=3439.043..3439.057 rows=1 loops=2)
+              ->  Nested Loop  (cost=239257.68..239980.43 rows=1 width=24) (actual time=3439.039..3439.052 rows=0 loops=2)
                     Join Filter: ((d2.d_date >= d1.d_date) AND (d2.d_date <= (d1.d_date + '30 days'::interval)))
-                    ->  Nested Loop  (cost=239257.38..239979.76 rows=2 width=32) (actual time=5182.262..5182.273 rows=0 loops=2)
-                          ->  Nested Loop  (cost=239257.24..239976.74 rows=1 width=35) (actual time=5182.262..5182.272 rows=0 loops=2)
+                    ->  Nested Loop  (cost=239257.38..239979.76 rows=2 width=32) (actual time=3439.038..3439.051 rows=0 loops=2)
+                          ->  Nested Loop  (cost=239257.24..239976.74 rows=1 width=35) (actual time=3439.038..3439.049 rows=0 loops=2)
                                 Join Filter: (inventory.inv_warehouse_sk = web_sales.ws_warehouse_sk)
-                                ->  Merge Join  (cost=239256.81..239258.19 rows=89 width=47) (actual time=4887.703..4892.143 rows=9869 loops=2)
+                                ->  Merge Join  (cost=239256.81..239258.19 rows=89 width=47) (actual time=3113.267..3117.225 rows=9869 loops=2)
                                       Merge Cond: (inventory.inv_warehouse_sk = warehouse.w_warehouse_sk)
-                                      ->  Sort  (cost=239255.54..239255.76 rows=89 width=40) (actual time=4887.654..4889.548 rows=9869 loops=2)
+                                      ->  Sort  (cost=239255.54..239255.76 rows=89 width=40) (actual time=3113.222..3114.857 rows=9869 loops=2)
                                             Sort Key: inventory.inv_warehouse_sk
                                             Sort Method: quicksort  Memory: 634kB
                                             Worker 0:  Sort Method: quicksort  Memory: 1486kB
-                                            ->  Nested Loop  (cost=3.28..239252.66 rows=89 width=40) (actual time=86.683..4883.066 rows=9869 loops=2)
-                                                  ->  Nested Loop  (cost=2.71..238929.17 rows=362 width=44) (actual time=7.519..3366.092 rows=7836 loops=2)
-                                                        ->  Nested Loop  (cost=2.29..237795.21 rows=2302 width=48) (actual time=4.905..2968.667 rows=91350 loops=2)
-                                                              ->  Nested Loop  (cost=1.86..236631.88 rows=2388 width=48) (actual time=4.846..2610.506 rows=92988 loops=2)
-                                                                    ->  Nested Loop  (cost=1.58..235888.34 rows=2477 width=48) (actual time=4.785..2449.872 rows=96395 loops=2)
-                                                                          ->  Nested Loop  (cost=1.16..234741.50 rows=2594 width=32) (actual time=4.712..2000.536 rows=98755 loops=2)
-                                                                                ->  Nested Loop  (cost=0.85..225005.13 rows=80477 width=28) (actual time=3.889..839.479 rows=2302559 loops=2)
-                                                                                      ->  Parallel Index Scan using date_dim_pkey on date_dim d1  (cost=0.29..3118.66 rows=214 width=8) (actual time=3.711..6.642 rows=182 loops=2)
+                                            ->  Nested Loop  (cost=3.28..239252.66 rows=89 width=40) (actual time=86.326..3110.129 rows=9869 loops=2)
+                                                  ->  Nested Loop  (cost=2.71..238929.17 rows=362 width=44) (actual time=18.151..3026.078 rows=7836 loops=2)
+                                                        ->  Nested Loop  (cost=2.29..237795.21 rows=2302 width=48) (actual time=15.120..2651.955 rows=91350 loops=2)
+                                                              ->  Nested Loop  (cost=1.86..236631.88 rows=2388 width=48) (actual time=15.061..2325.574 rows=92988 loops=2)
+                                                                    ->  Nested Loop  (cost=1.58..235888.34 rows=2477 width=48) (actual time=15.000..2187.149 rows=96395 loops=2)
+                                                                          ->  Nested Loop  (cost=1.16..234741.50 rows=2594 width=32) (actual time=14.937..1765.374 rows=98755 loops=2)
+                                                                                ->  Nested Loop  (cost=0.85..225005.13 rows=80477 width=28) (actual time=14.105..747.340 rows=2302559 loops=2)
+                                                                                      ->  Parallel Index Scan using date_dim_pkey on date_dim d1  (cost=0.29..3118.66 rows=214 width=8) (actual time=5.479..8.745 rows=182 loops=2)
                                                                                             Filter: (d_year = 1999)
                                                                                             Rows Removed by Filter: 36342
-                                                                                      ->  Index Only Scan using _dta_index_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4 on store_sales  (cost=0.56..902.75 rows=13410 width=20) (actual time=0.052..3.390 rows=12617 loops=365)
+                                                                                      ->  Index Only Scan using _dta_index_store_sales_6_1333579789__k1_k23_k14_k6_k8_k5_k7_3_4 on store_sales  (cost=0.56..902.75 rows=13410 width=20) (actual time=0.066..3.036 rows=12617 loops=365)
                                                                                             Index Cond: (ss_sold_date_sk = d1.d_date_sk)
                                                                                             Heap Fetches: 0
                                                                                 ->  Memoize  (cost=0.30..0.34 rows=1 width=4) (actual time=0.000..0.000 rows=0 loops=4605118)
@@ -48,16 +48,16 @@ Finalize Aggregate  (cost=240980.57..240980.58 rows=1 width=24) (actual time=717
                                                               Index Cond: (ca_address_sk = customer.c_current_addr_sk)
                                                               Filter: (ca_state = ANY ('{AR,GA,IA,MN,NC}'::bpchar[]))
                                                               Rows Removed by Filter: 1
-                                                  ->  Index Scan using inventory_pkey on inventory  (cost=0.57..0.87 rows=2 width=16) (actual time=0.184..0.193 rows=1 loops=15673)
+                                                  ->  Index Scan using inventory_pkey on inventory  (cost=0.57..0.87 rows=2 width=16) (actual time=0.009..0.010 rows=1 loops=15673)
                                                         Index Cond: ((inv_date_sk = store_sales.ss_sold_date_sk) AND (inv_item_sk = store_sales.ss_item_sk))
                                                         Filter: (inv_quantity_on_hand >= store_sales.ss_quantity)
                                                         Rows Removed by Filter: 0
-                                      ->  Sort  (cost=1.27..1.29 rows=10 width=7) (actual time=0.043..0.050 rows=10 loops=2)
+                                      ->  Sort  (cost=1.27..1.29 rows=10 width=7) (actual time=0.038..0.044 rows=10 loops=2)
                                             Sort Key: warehouse.w_warehouse_sk
                                             Sort Method: quicksort  Memory: 25kB
                                             Worker 0:  Sort Method: quicksort  Memory: 25kB
-                                            ->  Seq Scan on warehouse  (cost=0.00..1.10 rows=10 width=7) (actual time=0.030..0.032 rows=10 loops=2)
-                                ->  Index Scan using web_sales_pkey on web_sales  (cost=0.43..8.06 rows=1 width=20) (actual time=0.029..0.029 rows=0 loops=19738)
+                                            ->  Seq Scan on warehouse  (cost=0.00..1.10 rows=10 width=7) (actual time=0.025..0.028 rows=10 loops=2)
+                                ->  Index Scan using web_sales_pkey on web_sales  (cost=0.43..8.06 rows=1 width=20) (actual time=0.032..0.032 rows=0 loops=19738)
                                       Index Cond: (ws_item_sk = store_sales.ss_item_sk)
                                       Filter: ((ws_wholesale_cost >= '73'::numeric) AND (ws_wholesale_cost <= '93'::numeric) AND (store_sales.ss_customer_sk = ws_bill_customer_sk))
                                       Rows Removed by Filter: 32
@@ -66,5 +66,5 @@ Finalize Aggregate  (cost=240980.57..240980.58 rows=1 width=24) (actual time=717
                                 Heap Fetches: 0
                     ->  Index Scan using date_dim_pkey on date_dim d2  (cost=0.29..0.32 rows=1 width=8) (never executed)
                           Index Cond: (d_date_sk = web_sales.ws_sold_date_sk)
-Planning Time: 180.150 ms
-Execution Time: 7232.205 ms
+Planning Time: 181.031 ms
+Execution Time: 4604.785 ms

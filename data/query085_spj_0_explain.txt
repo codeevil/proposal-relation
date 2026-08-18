@@ -1,45 +1,45 @@
-Aggregate  (cost=83591.98..83591.99 rows=1 width=84) (actual time=2393.339..2426.498 rows=1 loops=1)
-  ->  Nested Loop  (cost=47129.38..83591.96 rows=1 width=32) (actual time=2182.381..2426.447 rows=11 loops=1)
-        ->  Nested Loop  (cost=47129.09..83591.65 rows=1 width=36) (actual time=861.551..2425.980 rows=106 loops=1)
-              ->  Gather  (cost=47128.94..83591.48 rows=1 width=40) (actual time=861.531..2425.498 rows=106 loops=1)
+Aggregate  (cost=83591.98..83591.99 rows=1 width=84) (actual time=9783.636..9822.264 rows=1 loops=1)
+  ->  Nested Loop  (cost=47129.38..83591.96 rows=1 width=32) (actual time=7572.548..9822.241 rows=11 loops=1)
+        ->  Nested Loop  (cost=47129.09..83591.65 rows=1 width=36) (actual time=1017.484..9819.297 rows=106 loops=1)
+              ->  Gather  (cost=47128.94..83591.48 rows=1 width=40) (actual time=1017.458..9818.847 rows=106 loops=1)
                     Workers Planned: 3
-                    Workers Launched: 1
-                    ->  Nested Loop  (cost=46128.94..82591.38 rows=1 width=40) (actual time=671.379..2387.925 rows=53 loops=2)
+                    Workers Launched: 3
+                    ->  Nested Loop  (cost=46128.94..82591.38 rows=1 width=40) (actual time=1385.907..9775.353 rows=26 loops=4)
                           Join Filter: ((((customer_address.ca_state = ANY ('{KS,ND,OK}'::bpchar[])) AND (web_sales.ws_net_profit >= '100'::numeric) AND (web_sales.ws_net_profit <= '200'::numeric)) OR ((customer_address.ca_state = ANY ('{GA,LA,NC}'::bpchar[])) AND (web_sales.ws_net_profit >= '150'::numeric) AND (web_sales.ws_net_profit <= '300'::numeric)) OR ((customer_address.ca_state = ANY ('{IL,ME,MI}'::bpchar[])) AND (web_sales.ws_net_profit >= '50'::numeric) AND (web_sales.ws_net_profit <= '250'::numeric))) AND (((cd1.cd_marital_status = 'S'::bpchar) AND (cd1.cd_education_status = 'Unknown'::bpchar) AND (web_sales.ws_sales_price >= 100.00) AND (web_sales.ws_sales_price <= 150.00)) OR ((cd1.cd_marital_status = 'D'::bpchar) AND (cd1.cd_education_status = 'Advanced Degree'::bpchar) AND (web_sales.ws_sales_price >= 50.00) AND (web_sales.ws_sales_price <= 100.00)) OR ((cd1.cd_marital_status = 'M'::bpchar) AND (cd1.cd_education_status = 'Secondary'::bpchar) AND (web_sales.ws_sales_price >= 150.00) AND (web_sales.ws_sales_price <= 200.00))))
-                          Rows Removed by Join Filter: 257
-                          ->  Nested Loop  (cost=46128.51..82377.62 rows=191 width=54) (actual time=286.621..699.953 rows=9172 loops=2)
+                          Rows Removed by Join Filter: 128
+                          ->  Nested Loop  (cost=46128.51..82377.62 rows=191 width=54) (actual time=194.016..618.263 rows=4586 loops=4)
                                 Join Filter: ((cd1.cd_marital_status = cd2.cd_marital_status) AND (cd1.cd_education_status = cd2.cd_education_status))
-                                ->  Hash Join  (cost=46128.08..78628.17 rows=7005 width=54) (actual time=286.536..636.658 rows=9224 loops=2)
+                                ->  Hash Join  (cost=46128.08..78628.17 rows=7005 width=54) (actual time=193.947..565.397 rows=4612 loops=4)
                                       Hash Cond: (web_returns.wr_reason_sk = reason.r_reason_sk)
-                                      ->  Parallel Hash Join  (cost=46126.07..78605.14 rows=7346 width=58) (actual time=286.366..633.562 rows=9342 loops=2)
+                                      ->  Parallel Hash Join  (cost=46126.07..78605.14 rows=7346 width=58) (actual time=193.787..562.208 rows=4671 loops=4)
                                             Hash Cond: (web_returns.wr_refunded_addr_sk = customer_address.ca_address_sk)
-                                            ->  Parallel Hash Join  (cost=37964.49..70346.44 rows=36996 width=59) (actual time=211.413..540.013 rows=42052 loops=2)
+                                            ->  Parallel Hash Join  (cost=37964.49..70346.44 rows=36996 width=59) (actual time=150.303..505.787 rows=21026 loops=4)
                                                   Hash Cond: (web_returns.wr_refunded_cdemo_sk = cd1.cd_demo_sk)
-                                                  ->  Parallel Seq Scan on web_returns  (cost=0.00..31162.30 rows=464630 width=36) (actual time=0.022..69.114 rows=720177 loops=2)
-                                                  ->  Parallel Hash  (cost=37318.32..37318.32 rows=51693 width=27) (actual time=210.696..210.697 rows=82320 loops=2)
+                                                  ->  Parallel Seq Scan on web_returns  (cost=0.00..31162.30 rows=464630 width=36) (actual time=26.878..227.653 rows=360088 loops=4)
+                                                  ->  Parallel Hash  (cost=37318.32..37318.32 rows=51693 width=27) (actual time=122.987..122.988 rows=41160 loops=4)
                                                         Buckets: 262144  Batches: 1  Memory Usage: 12384kB
-                                                        ->  Parallel Seq Scan on customer_demographics cd1  (cost=0.00..37318.32 rows=51693 width=27) (actual time=0.015..178.743 rows=82320 loops=2)
+                                                        ->  Parallel Seq Scan on customer_demographics cd1  (cost=0.00..37318.32 rows=51693 width=27) (actual time=0.046..105.105 rows=41160 loops=4)
                                                               Filter: (((cd_marital_status = 'S'::bpchar) AND (cd_education_status = 'Unknown'::bpchar)) OR ((cd_marital_status = 'D'::bpchar) AND (cd_education_status = 'Advanced Degree'::bpchar)) OR ((cd_marital_status = 'M'::bpchar) AND (cd_education_status = 'Secondary'::bpchar)))
-                                                              Rows Removed by Filter: 878080
-                                            ->  Parallel Hash  (cost=7890.96..7890.96 rows=21650 width=7) (actual time=74.221..74.222 rows=28268 loops=2)
+                                                              Rows Removed by Filter: 439040
+                                            ->  Parallel Hash  (cost=7890.96..7890.96 rows=21650 width=7) (actual time=43.107..43.107 rows=14134 loops=4)
                                                   Buckets: 65536  Batches: 1  Memory Usage: 2784kB
-                                                  ->  Parallel Seq Scan on customer_address  (cost=0.00..7890.96 rows=21650 width=7) (actual time=0.048..65.293 rows=28268 loops=2)
+                                                  ->  Parallel Seq Scan on customer_address  (cost=0.00..7890.96 rows=21650 width=7) (actual time=0.049..38.859 rows=14134 loops=4)
                                                         Filter: (((ca_country)::text = 'United States'::text) AND ((ca_state = ANY ('{KS,ND,OK}'::bpchar[])) OR (ca_state = ANY ('{GA,LA,NC}'::bpchar[])) OR (ca_state = ANY ('{IL,ME,MI}'::bpchar[]))))
-                                                        Rows Removed by Filter: 96732
-                                      ->  Hash  (cost=1.45..1.45 rows=45 width=4) (actual time=0.047..0.047 rows=45 loops=2)
+                                                        Rows Removed by Filter: 48366
+                                      ->  Hash  (cost=1.45..1.45 rows=45 width=4) (actual time=0.046..0.047 rows=45 loops=4)
                                             Buckets: 1024  Batches: 1  Memory Usage: 10kB
-                                            ->  Seq Scan on reason  (cost=0.00..1.45 rows=45 width=4) (actual time=0.023..0.030 rows=45 loops=2)
-                                ->  Index Scan using customer_demographics_pkey on customer_demographics cd2  (cost=0.43..0.52 rows=1 width=27) (actual time=0.006..0.006 rows=1 loops=18448)
+                                            ->  Seq Scan on reason  (cost=0.00..1.45 rows=45 width=4) (actual time=0.024..0.030 rows=45 loops=4)
+                                ->  Index Scan using customer_demographics_pkey on customer_demographics cd2  (cost=0.43..0.52 rows=1 width=27) (actual time=0.010..0.010 rows=1 loops=18448)
                                       Index Cond: (cd_demo_sk = web_returns.wr_returning_cdemo_sk)
-                          ->  Index Scan using web_sales_pkey on web_sales  (cost=0.43..1.05 rows=1 width=32) (actual time=0.184..0.184 rows=0 loops=18345)
+                          ->  Index Scan using web_sales_pkey on web_sales  (cost=0.43..1.05 rows=1 width=32) (actual time=1.996..1.996 rows=0 loops=18345)
                                 Index Cond: ((ws_item_sk = web_returns.wr_item_sk) AND (ws_order_number = web_returns.wr_order_number))
                                 Filter: ((((ws_sales_price >= 100.00) AND (ws_sales_price <= 150.00)) OR ((ws_sales_price >= 50.00) AND (ws_sales_price <= 100.00)) OR ((ws_sales_price >= 150.00) AND (ws_sales_price <= 200.00))) AND (((ws_net_profit >= '100'::numeric) AND (ws_net_profit <= '200'::numeric)) OR ((ws_net_profit >= '150'::numeric) AND (ws_net_profit <= '300'::numeric)) OR ((ws_net_profit >= '50'::numeric) AND (ws_net_profit <= '250'::numeric))))
                                 Rows Removed by Filter: 1
               ->  Index Only Scan using web_page_pkey on web_page  (cost=0.14..0.16 rows=1 width=4) (actual time=0.003..0.003 rows=1 loops=106)
                     Index Cond: (wp_web_page_sk = web_sales.ws_web_page_sk)
                     Heap Fetches: 106
-        ->  Index Only Scan using _dta_index_date_dim_6_661577395__k7_k1 on date_dim  (cost=0.29..0.31 rows=1 width=4) (actual time=0.004..0.004 rows=0 loops=106)
+        ->  Index Only Scan using _dta_index_date_dim_6_661577395__k7_k1 on date_dim  (cost=0.29..0.31 rows=1 width=4) (actual time=0.027..0.027 rows=0 loops=106)
               Index Cond: ((d_year = 2002) AND (d_date_sk = web_sales.ws_sold_date_sk))
               Heap Fetches: 0
-Planning Time: 98.676 ms
-Execution Time: 2427.010 ms
+Planning Time: 288.998 ms
+Execution Time: 9822.825 ms

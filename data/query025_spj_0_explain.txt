@@ -1,30 +1,30 @@
-Aggregate  (cost=11586.40..11586.41 rows=1 width=236) (actual time=1683.479..1683.562 rows=1 loops=1)
-  ->  Nested Loop  (cost=1002.74..11586.38 rows=1 width=171) (actual time=1683.473..1683.555 rows=0 loops=1)
-        ->  Nested Loop  (cost=1002.45..11586.07 rows=1 width=59) (actual time=1683.472..1683.554 rows=0 loops=1)
-              ->  Nested Loop  (cost=1002.31..11585.91 rows=1 width=42) (actual time=1683.472..1683.553 rows=0 loops=1)
-                    ->  Nested Loop  (cost=1002.01..11585.59 rows=1 width=46) (actual time=133.787..1683.488 rows=13 loops=1)
-                          ->  Nested Loop  (cost=1001.72..11585.27 rows=1 width=50) (actual time=35.278..1682.887 rows=251 loops=1)
-                                ->  Gather  (cost=1001.16..11584.62 rows=1 width=40) (actual time=1.912..1144.187 rows=216392 loops=1)
+Aggregate  (cost=11586.40..11586.41 rows=1 width=236) (actual time=22998.157..22998.234 rows=1 loops=1)
+  ->  Nested Loop  (cost=1002.74..11586.38 rows=1 width=171) (actual time=22998.152..22998.228 rows=0 loops=1)
+        ->  Nested Loop  (cost=1002.45..11586.07 rows=1 width=59) (actual time=22998.152..22998.227 rows=0 loops=1)
+              ->  Nested Loop  (cost=1002.31..11585.91 rows=1 width=42) (actual time=22998.152..22998.227 rows=0 loops=1)
+                    ->  Nested Loop  (cost=1002.01..11585.59 rows=1 width=46) (actual time=6176.031..22998.078 rows=13 loops=1)
+                          ->  Nested Loop  (cost=1001.72..11585.27 rows=1 width=50) (actual time=2463.624..22996.494 rows=251 loops=1)
+                                ->  Gather  (cost=1001.16..11584.62 rows=1 width=40) (actual time=22.640..1920.888 rows=216392 loops=1)
                                       Workers Planned: 2
                                       Workers Launched: 2
-                                      ->  Nested Loop  (cost=1.16..10584.52 rows=1 width=40) (actual time=1.770..377.375 rows=72131 loops=3)
-                                            ->  Nested Loop  (cost=0.72..7704.27 rows=3607 width=18) (actual time=1.748..23.460 rows=97400 loops=3)
-                                                  ->  Parallel Index Only Scan using _dta_index_date_dim_6_661577395__k1_k7_k9 on date_dim d2  (cost=0.29..2041.78 rows=38 width=4) (actual time=1.735..1.750 rows=31 loops=3)
+                                      ->  Nested Loop  (cost=1.16..10584.52 rows=1 width=40) (actual time=8.429..630.631 rows=72131 loops=3)
+                                            ->  Nested Loop  (cost=0.72..7704.27 rows=3607 width=18) (actual time=5.629..54.909 rows=97400 loops=3)
+                                                  ->  Parallel Index Only Scan using _dta_index_date_dim_6_661577395__k1_k7_k9 on date_dim d2  (cost=0.29..2041.78 rows=38 width=4) (actual time=1.640..1.665 rows=31 loops=3)
                                                         Index Cond: ((d_year = 1999) AND (d_moy >= 10) AND (d_moy <= 12))
                                                         Heap Fetches: 0
-                                                  ->  Index Only Scan using _dta_index_store_returns_6_1013578649__k1_3_4_10_20 on store_returns  (cost=0.43..117.79 rows=3122 width=22) (actual time=0.007..0.436 rows=3176 loops=92)
+                                                  ->  Index Only Scan using _dta_index_store_returns_6_1013578649__k1_3_4_10_20 on store_returns  (cost=0.43..117.79 rows=3122 width=22) (actual time=0.144..1.218 rows=3176 loops=92)
                                                         Index Cond: (sr_returned_date_sk = d2.d_date_sk)
                                                         Heap Fetches: 0
-                                            ->  Index Scan using _dta_index_store_sales_6_1333579789__k10_k3 on store_sales  (cost=0.44..0.79 rows=1 width=26) (actual time=0.003..0.003 rows=1 loops=292200)
+                                            ->  Index Scan using _dta_index_store_sales_6_1333579789__k10_k3 on store_sales  (cost=0.44..0.79 rows=1 width=26) (actual time=0.005..0.005 rows=1 loops=292200)
                                                   Index Cond: ((ss_ticket_number = store_returns.sr_ticket_number) AND (ss_item_sk = store_returns.sr_item_sk))
                                                   Filter: (store_returns.sr_customer_sk = ss_customer_sk)
                                                   Rows Removed by Filter: 0
-                                ->  Index Scan using _dta_index_catalog_sales_6_1301579675__k16_k4_k1_34 on catalog_sales  (cost=0.56..0.64 rows=1 width=22) (actual time=0.002..0.002 rows=0 loops=216392)
+                                ->  Index Scan using _dta_index_catalog_sales_6_1301579675__k16_k4_k1_34 on catalog_sales  (cost=0.56..0.64 rows=1 width=22) (actual time=0.096..0.097 rows=0 loops=216392)
                                       Index Cond: ((cs_item_sk = store_sales.ss_item_sk) AND (cs_bill_customer_sk = store_sales.ss_customer_sk))
-                          ->  Index Only Scan using _dta_index_date_dim_6_661577395__k1_k7_k9 on date_dim d1  (cost=0.29..0.32 rows=1 width=4) (actual time=0.002..0.002 rows=0 loops=251)
+                          ->  Index Only Scan using _dta_index_date_dim_6_661577395__k1_k7_k9 on date_dim d1  (cost=0.29..0.32 rows=1 width=4) (actual time=0.005..0.005 rows=0 loops=251)
                                 Index Cond: ((d_date_sk = store_sales.ss_sold_date_sk) AND (d_year = 1999) AND (d_moy = 10))
                                 Heap Fetches: 0
-                    ->  Index Only Scan using _dta_index_date_dim_6_661577395__k1_k7_k9 on date_dim d3  (cost=0.29..0.32 rows=1 width=4) (actual time=0.004..0.004 rows=0 loops=13)
+                    ->  Index Only Scan using _dta_index_date_dim_6_661577395__k1_k7_k9 on date_dim d3  (cost=0.29..0.32 rows=1 width=4) (actual time=0.009..0.010 rows=0 loops=13)
                           Index Cond: ((d_date_sk = catalog_sales.cs_sold_date_sk) AND (d_year = 1999) AND (d_moy >= 10) AND (d_moy <= 12))
                           Heap Fetches: 0
               ->  Index Only Scan using _dta_index_store_6_885578193__k1_2_6 on store  (cost=0.14..0.16 rows=1 width=25) (never executed)
@@ -32,5 +32,5 @@ Aggregate  (cost=11586.40..11586.41 rows=1 width=236) (actual time=1683.479..168
                     Heap Fetches: 0
         ->  Index Scan using item_pkey on item  (cost=0.29..0.31 rows=1 width=124) (never executed)
               Index Cond: (i_item_sk = store_sales.ss_item_sk)
-Planning Time: 32.011 ms
-Execution Time: 1683.734 ms
+Planning Time: 244.450 ms
+Execution Time: 22998.480 ms
