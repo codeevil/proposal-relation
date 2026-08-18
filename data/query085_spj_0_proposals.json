@@ -2,263 +2,236 @@
 [
   {
     "proposal_id": 1,
-    "strategy_overview": "修正严重行数估计偏差，强制哈希连接并优化连接顺序，彻底解决嵌套循环性能瓶颈",
+    "strategy_overview": "校正严重行数估计偏差，强制哈希连接并优化连接顺序，消除嵌套循环的指数级开销",
     "core_optimization_points": [
-      "校正web_returns与customer_address连接后中间结果集的估计偏差，实际行数为4671×4=18684，远高于估计值，使用Rows Hint修正",
-      "调整连接顺序为customer_demographics→customer_address→web_returns→reason，将小结果集驱动表前置",
-      "强制web_returns与customer_address之间使用HashJoin，替代低效的Nested Loop",
-      "强制customer_demographics与web_returns之间使用HashJoin，避免因cd1过滤后仍产生大量中间行",
-      "提升web_returns表并行度至4，加速大表扫描"
+      "识别出`web_returns`与`customer_address`连接后实际行数远高于估计（实际约2.1万，估计仅1），使用`Rows` Hint修正",
+      "将`customer_address`与`customer_demographics cd1`的连接提前并聚合成子结果，控制中间结果膨胀",
+      "强制`web_returns`与`customer_address`使用哈希连接，避免嵌套循环在大表上循环扫描",
+      "调整连接顺序为`web_returns`→`customer_address`→`customer_demographics cd1`→`cd2`，形成左深树结构，减少中间结果集增长"
     ],
-    "hint_combination": "/*+ Rows(web_returns customer_address *0.5) Leading( (cd1 customer_address web_returns reason) ) HashJoin(web_returns customer_address) HashJoin(cd1 web_returns) Parallel(web_returns 4) */",
-    "expected_performance_benefit": "预计降低执行耗时60%-80%，核心收益来自消除嵌套循环对大表的千万级循环扫描，哈希连接显著降低IO与CPU开销"
+    "hint_combination": "/*+ Rows(web_returns customer_address *0.1) Leading( (web_returns (customer_address customer_demographics cd1) customer_demographics cd2) ) HashJoin(web_returns customer_address) HashJoin(customer_address customer_demographics cd1) HashJoin(web_returns customer_address customer_demographics cd1) */",
+    "expected_performance_benefit": "预计降低执行耗时60%-80%，核心收益来自纠正优化器对`customer_address`与`web_returns`连接结果的严重低估，避免嵌套循环在大表上循环百万次"
   },
   {
     "proposal_id": 2,
-    "strategy_overview": "强制仅索引扫描，消除回表开销，提升扫描效率并减少随机IO",
+    "strategy_overview": "强制使用仅索引扫描覆盖关键字段，消除回表开销，提升扫描效率",
     "core_optimization_points": [
-      "强制customer_demographics cd1使用覆盖索引扫描，避免回表",
-      "强制customer_address使用覆盖索引扫描，避免回表",
-      "强制web_returns使用索引扫描，命中wr_item_sk和wr_order_number组合索引",
-      "强制date_dim使用仅索引扫描，通过d_year和d_date_sk索引快速定位",
-      "禁用seqscan，强制所有相关表使用索引扫描"
+      "识别`web_sales`表的`ws_item_sk`和`ws_order_number`组合有唯一索引`web_sales_pkey`，且查询仅需该两列与`ws_sold_date_sk`",
+      "强制`web_sales`使用`IndexOnlyScan`，避免回表读取完整行",
+      "将`web_sales`作为内表参与连接，利用其高选择性索引快速定位匹配行",
+      "配合`Leading`调整连接顺序，使`web_sales`尽早被驱动"
     ],
-    "hint_combination": "/*+ IndexOnlyScan(cd1) IndexOnlyScan(customer_address) IndexScan(web_returns) IndexOnlyScan(date_dim) NoSeqScan(cd1) NoSeqScan(customer_address) NoSeqScan(web_returns) NoSeqScan(date_dim) */",
-    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自消除大量回表IO，尤其在高并发场景下优势显著"
+    "hint_combination": "/*+ IndexOnlyScan(web_sales web_sales_pkey) Leading( (web_returns (customer_address customer_demographics cd1) customer_demographics cd2) web_sales web_page date_dim reason) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自消除`web_sales`表的回表IO，仅索引扫描可减少80%以上的随机IO"
   },
   {
     "proposal_id": 3,
-    "strategy_overview": "重构连接顺序，优先过滤高选择性条件，最小化中间结果集规模",
+    "strategy_overview": "优化连接顺序，将高选择性过滤表作为驱动表，提前缩小数据集规模",
     "core_optimization_points": [
-      "将date_dim d_year=2002条件提前应用，强制在最内层执行",
-      "将ca_country='United States'和ca_state in(...)条件前置，减少customer_address扫描行数",
-      "将cd1的多条件过滤（marital_status + education_status）前置，减少cd1扫描行数",
-      "强制连接顺序为date_dim→customer_address→cd1→web_returns→reason→web_sales→web_page",
-      "使用Rows Hint校正cd1与web_returns连接后的行数偏差"
+      "`date_dim`表中`d_year = 2002`条件选择性极高（73049行中仅约365行），应作为最外层驱动表",
+      "`reason`表仅45行，且为等值连接，应优先与`web_returns`连接",
+      "将`date_dim`与`web_sales`的连接提前，利用`d_date_sk`索引快速定位2002年数据",
+      "调整连接顺序为`date_dim`→`web_sales`→`web_returns`→`customer_address`等，形成高效左深树"
     ],
-    "hint_combination": "/*+ Leading( (date_dim customer_address cd1 web_returns reason web_sales web_page) ) Rows(cd1 web_returns *0.3) */",
-    "expected_performance_benefit": "预计降低执行耗时50%-65%，核心收益来自早期过滤减少中间结果集膨胀，连接顺序更符合数据流逻辑"
+    "hint_combination": "/*+ Leading( (date_dim web_sales web_returns (customer_address customer_demographics cd1) customer_demographics cd2 reason) ) */",
+    "expected_performance_benefit": "预计降低执行耗时50%-65%，核心收益来自将高选择性`date_dim`作为驱动表，使`web_sales`扫描行数从719万降至约3.6万"
   },
   {
     "proposal_id": 4,
-    "strategy_overview": "强制合并连接，复用索引排序，避免哈希构建与探测开销",
+    "strategy_overview": "强制使用哈希连接替代嵌套循环，避免小表驱动大表时的性能退化",
     "core_optimization_points": [
-      "强制customer_demographics与web_returns使用MergeJoin，因cd1有索引且数据天然有序",
-      "强制customer_address与web_returns使用MergeJoin，因ca_address_sk有主键索引",
-      "强制reason与web_returns使用MergeJoin，因r_reason_sk为主键索引",
-      "禁用HashJoin与NestLoop，避免不必要的代价开销",
-      "提升work_mem至256MB，防止合并连接磁盘溢出"
+      "原计划中`web_returns`（144万行）作为内表被`customer_address`（25万行）驱动，导致嵌套循环执行约360亿次",
+      "强制`customer_address`与`web_returns`使用哈希连接，避免嵌套循环的O(n×m)复杂度",
+      "将`customer_address`作为小表构建哈希表，`web_returns`逐行探测，提升吞吐",
+      "结合`Rows` Hint校正`web_returns`与`customer_address`连接后行数估计"
     ],
-    "hint_combination": "/*+ MergeJoin(cd1 web_returns) MergeJoin(customer_address web_returns) MergeJoin(reason web_returns) NoHashJoin(cd1 web_returns) NoNestLoop(cd1 web_returns) Set(work_mem '256MB') */",
-    "expected_performance_benefit": "预计降低执行耗时45%-60%，核心收益来自复用索引排序，避免哈希表构建与探测开销，尤其适合有序数据"
+    "hint_combination": "/*+ Rows(web_returns customer_address *0.1) HashJoin(customer_address web_returns) Leading( (customer_address web_returns (customer_demographics cd1) customer_demographics cd2) date_dim web_sales reason) */",
+    "expected_performance_benefit": "预计降低执行耗时55%-75%，核心收益来自将嵌套循环的O(n×m)复杂度降至O(n+m)，避免数亿次循环扫描"
   },
   {
     "proposal_id": 5,
-    "strategy_overview": "强制位图扫描，提升多条件组合过滤效率，减少随机IO",
+    "strategy_overview": "利用覆盖索引实现`web_sales`的仅索引扫描，配合`date_dim`驱动实现高效过滤",
     "core_optimization_points": [
-      "强制customer_address使用BitmapScan，因ca_country和ca_state有多条件过滤",
-      "强制customer_demographics使用BitmapScan，因cd_marital_status和cd_education_status有复杂条件组合",
-      "强制web_sales使用BitmapScan，因ws_sales_price和ws_net_profit有多个范围条件",
-      "禁用SeqScan，强制使用位图扫描提升过滤效率",
-      "提升random_page_cost为1.1，匹配SSD环境"
+      "`web_sales`表的`ws_sold_date_sk`字段在`_dta_index_web_sales_6_1269579561__k1_8_24`中存在，且包含`ws_bill_addr_sk`等列",
+      "但`ws_sold_date_sk`与`ws_order_number`在`web_sales_pkey`中为唯一键，可覆盖`ws_sold_date_sk`",
+      "强制`web_sales`使用`IndexOnlyScan`，结合`date_dim`的`d_date_sk`索引快速定位",
+      "避免`web_sales`表全表扫描，减少IO"
     ],
-    "hint_combination": "/*+ BitmapScan(customer_address) BitmapScan(cd1) BitmapScan(web_sales) NoSeqScan(customer_address) NoSeqScan(cd1) NoSeqScan(web_sales) Set(random_page_cost 1.1) */",
-    "expected_performance_benefit": "预计降低执行耗时35%-50%，核心收益来自位图扫描减少随机IO，尤其在多条件组合过滤场景下表现优异"
+    "hint_combination": "/*+ IndexOnlyScan(web_sales web_sales_pkey) Leading( (date_dim web_sales web_returns customer_address customer_demographics cd1 customer_demographics cd2 reason) ) */",
+    "expected_performance_benefit": "预计降低执行耗时45%-60%，核心收益来自`web_sales`仅索引扫描，避免回表，结合`date_dim`过滤后扫描行数减少99%以上"
   },
   {
     "proposal_id": 6,
-    "strategy_overview": "强制哈希连接并提升并行度，充分利用多核并行能力加速大表连接",
+    "strategy_overview": "通过`Rows` Hint校正统计信息偏差，强制优化器选择更优连接路径",
     "core_optimization_points": [
-      "强制web_returns与customer_address使用HashJoin，替代嵌套循环",
-      "强制cd1与web_returns使用HashJoin，避免因连接键无索引导致的低效扫描",
-      "提升web_returns表并行度至8，充分利用CPU资源",
-      "提升customer_address并行度至4，加速大表扫描",
-      "禁用NestLoop，避免低效嵌套循环"
+      "`customer_address`表中`ca_state`在`KS, ND, OK, GA, LA, NC, IL, ME, MI`中分布不均，但`web_returns`中`wr_refunded_addr_sk`的`n_distinct`为负值，说明统计信息严重失准",
+      "实际`customer_address`中符合条件的行数约2.1万，但优化器估计仅1000行，偏差20倍",
+      "使用`Rows` Hint强制将`customer_address`与`web_returns`连接结果估计为2.1万行",
+      "使优化器更倾向于使用哈希连接而非嵌套循环"
     ],
-    "hint_combination": "/*+ HashJoin(web_returns customer_address) HashJoin(cd1 web_returns) Parallel(web_returns 8) Parallel(customer_address 4) NoNestLoop(web_returns customer_address) NoNestLoop(cd1 web_returns) */",
-    "expected_performance_benefit": "预计降低执行耗时55%-70%，核心收益来自并行哈希连接大幅提升大表连接吞吐量"
+    "hint_combination": "/*+ Rows(customer_address web_returns *21) Leading( (customer_address web_returns customer_demographics cd1 customer_demographics cd2) date_dim web_sales reason) */",
+    "expected_performance_benefit": "预计降低执行耗时50%-70%，核心收益来自纠正优化器对连接结果集的严重低估，避免错误选择嵌套循环"
   },
   {
     "proposal_id": 7,
-    "strategy_overview": "使用Memoize缓存优化嵌套循环，避免重复查询内表结果",
+    "strategy_overview": "提升并行度，加速大表扫描与哈希连接，利用多核资源并行处理",
     "core_optimization_points": [
-      "在cd1与web_returns连接中启用Memoize，因cd1的cd_demo_sk在多行中重复",
-      "在customer_address与web_returns连接中启用Memoize，因ca_address_sk重复率高",
-      "强制使用Nested Loop，因驱动表结果集小，Memoize收益显著",
-      "提升work_mem至128MB，防止Memoize缓存溢出",
-      "禁用HashJoin，避免不必要的哈希构建"
+      "`web_returns`表有144万行，`customer_address`有25万行，扫描与哈希构建可并行",
+      "当前`Workers Planned: 3`，但实际并行度未充分利用CPU核心",
+      "将`web_returns`与`customer_address`的扫描并行度提升至8，充分利用多核",
+      "避免单线程扫描导致的CPU空闲"
     ],
-    "hint_combination": "/*+ Memoize(cd1 web_returns) Memoize(customer_address web_returns) NestLoop(cd1 web_returns) NestLoop(customer_address web_returns) Set(work_mem '128MB') NoHashJoin(cd1 web_returns) NoHashJoin(customer_address web_returns) */",
-    "expected_performance_benefit": "预计降低执行耗时30%-45%，核心收益来自避免对内表的重复扫描，尤其在驱动表有重复键时效果显著"
+    "hint_combination": "/*+ Parallel(web_returns 8) Parallel(customer_address 8) Leading( (web_returns customer_address customer_demographics cd1 customer_demographics cd2) date_dim web_sales reason) */",
+    "expected_performance_benefit": "预计降低执行耗时35%-50%，核心收益来自并行加速大表扫描与哈希连接，尤其在多核服务器上表现显著"
   },
   {
     "proposal_id": 8,
-    "strategy_overview": "校正统计信息偏差，强制指定行数，引导优化器生成正确计划",
+    "strategy_overview": "强制合并连接复用排序结果，避免重复排序开销",
     "core_optimization_points": [
-      "校正web_returns与customer_address连接后实际行数为18684，远高于估计值，使用Rows Hint修正",
-      "校正cd1与web_returns连接后实际行数为4612×4=18448，使用Rows Hint修正",
-      "校正web_sales与web_returns连接后实际行数为106，使用Rows Hint修正",
-      "强制优化器基于真实行数选择连接方法",
-      "提升max_parallel_workers_per_gather至8，提升并行能力"
+      "`date_dim`表中`d_date_sk`有`date_dim_pkey`索引，天然有序",
+      "`web_sales`表中`ws_sold_date_sk`在多个索引中存在，且`d_date_sk`与`ws_sold_date_sk`等值连接",
+      "强制`date_dim`与`web_sales`使用`MergeJoin`，复用索引排序结果",
+      "避免额外排序开销"
     ],
-    "hint_combination": "/*+ Rows(web_returns customer_address *0.5) Rows(cd1 web_returns *0.4) Rows(web_sales web_returns *0.1) Set(max_parallel_workers_per_gather 8) */",
-    "expected_performance_benefit": "预计降低执行耗时50%-65%，核心收益来自修复优化器估计偏差，使其选择正确执行路径"
+    "hint_combination": "/*+ MergeJoin(date_dim web_sales) Leading( (date_dim web_sales web_returns customer_address customer_demographics cd1 customer_demographics cd2 reason) ) */",
+    "expected_performance_benefit": "预计降低执行耗时25%-40%，核心收益来自复用`date_dim`与`web_sales`的索引排序，避免额外排序代价"
   },
   {
     "proposal_id": 9,
-    "strategy_overview": "强制索引扫描并禁用并行，避免并行开销对小表的影响",
+    "strategy_overview": "通过`Set`调整代价参数，引导优化器更倾向于哈希连接与并行扫描",
     "core_optimization_points": [
-      "强制reason表使用IndexScan，因表极小（45行），并行无意义",
-      "强制date_dim使用IndexScan，因d_year=2002选择性高",
-      "强制web_page使用IndexScan，因wp_web_page_sk为主键",
-      "禁用reason、date_dim、web_page的并行扫描，避免启动开销",
-      "提升work_mem至64MB，防止小表排序溢出"
+      "当前`random_page_cost`默认为4.0，但若为SSD环境，应下调至1.1",
+      "降低`random_page_cost`可使索引扫描代价下降，引导优化器选择哈希连接",
+      "提升`work_mem`至256MB，避免哈希连接或排序磁盘溢出",
+      "提升`max_parallel_workers_per_gather`至16，允许更多并行"
     ],
-    "hint_combination": "/*+ IndexScan(reason) IndexScan(date_dim) IndexScan(web_page) Parallel(reason 0) Parallel(date_dim 0) Parallel(web_page 0) Set(work_mem '64MB') */",
-    "expected_performance_benefit": "预计降低执行耗时25%-35%，核心收益来自避免小表并行启动开销，提升小表扫描效率"
+    "hint_combination": "/*+ Set(random_page_cost 1.1) Set(work_mem '256MB') Set(max_parallel_workers_per_gather 16) Leading( (date_dim web_sales web_returns customer_address customer_demographics cd1 customer_demographics cd2 reason) ) */",
+    "expected_performance_benefit": "预计降低执行耗时30%-50%，核心收益来自代价模型调整，使优化器更倾向选择哈希连接与并行扫描"
   },
   {
     "proposal_id": 10,
-    "strategy_overview": "重构连接树为灌木结构，先聚合子结果再连接，控制中间结果膨胀",
+    "strategy_overview": "将`customer_demographics cd1`与`cd2`的连接提前，利用`cd1`的高选择性过滤缩小`cd2`扫描范围",
     "core_optimization_points": [
-      "将cd1与cd2的连接重构为子结果集，先聚合再连接",
-      "将customer_address与reason的连接先聚合，再与web_returns连接",
-      "使用灌木树写法强制连接顺序为( (cd1 cd2) (customer_address reason) )",
-      "强制使用HashJoin连接子结果集",
-      "提升web_returns并行度至6"
+      "`cd1`表中`cd_marital_status`与`cd_education_status`组合有3种有效条件，过滤后行数约1.5万",
+      "`cd2`表无过滤，需全表扫描，但其连接键为`cd_demo_sk`，与`web_returns`匹配",
+      "将`cd1`作为驱动表，`cd2`作为内表，强制`cd1`先过滤，再驱动`cd2`",
+      "避免`cd2`全表扫描"
     ],
-    "hint_combination": "/*+ Leading( ((cd1 cd2) (customer_address reason)) ) HashJoin(cd1 cd2) HashJoin(customer_address reason) Parallel(web_returns 6) */",
-    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自减少中间结果集膨胀，提升连接效率"
+    "hint_combination": "/*+ Leading( (customer_demographics cd1 customer_demographics cd2) ) NoNestLoop(customer_demographics cd1 customer_demographics cd2) HashJoin(customer_demographics cd1 customer_demographics cd2) */",
+    "expected_performance_benefit": "预计降低执行耗时20%-35%，核心收益来自将`cd2`从全表扫描转为仅扫描匹配行，减少扫描行数"
   },
   {
     "proposal_id": 11,
-    "strategy_overview": "强制使用覆盖索引扫描，完全避免回表，提升扫描效率",
+    "strategy_overview": "使用`Memoize`缓存`cd2`查询结果，避免嵌套循环中重复扫描",
     "core_optimization_points": [
-      "强制cd1使用覆盖索引扫描，因cd_demo_sk、cd_marital_status、cd_education_status均在索引中",
-      "强制customer_address使用覆盖索引扫描，因ca_address_sk、ca_country、ca_state均在索引中",
-      "强制web_returns使用覆盖索引扫描，因wr_item_sk、wr_order_number、wr_refunded_addr_sk、wr_refunded_cdemo_sk均在索引中",
-      "禁用IndexScan，强制使用IndexOnlyScan",
-      "提升effective_cache_size至64GB，提升缓存命中率"
+      "`cd2`表在嵌套循环中被`web_returns`的`wr_returning_cdemo_sk`驱动，但`cd_demo_sk`为唯一键",
+      "相同`cd_demo_sk`值在`web_returns`中可能重复出现，导致`cd2`被多次扫描",
+      "启用`Memoize`缓存`cd2`的查询结果，避免重复索引扫描",
+      "提升嵌套循环性能"
     ],
-    "hint_combination": "/*+ IndexOnlyScan(cd1) IndexOnlyScan(customer_address) IndexOnlyScan(web_returns) NoIndexScan(cd1) NoIndexScan(customer_address) NoIndexScan(web_returns) Set(effective_cache_size '64GB') */",
-    "expected_performance_benefit": "预计降低执行耗时45%-60%，核心收益来自完全避免回表，尤其在高并发场景下优势显著"
+    "hint_combination": "/*+ Memoize(customer_demographics cd2) Leading( (web_returns customer_address customer_demographics cd1 customer_demographics cd2) date_dim web_sales reason) */",
+    "expected_performance_benefit": "预计降低执行耗时15%-25%，核心收益来自避免`cd2`表的重复索引扫描，尤其在`wr_returning_cdemo_sk`重复值多时效果显著"
   },
   {
     "proposal_id": 12,
-    "strategy_overview": "强制连接方法与扫描路径协同优化，实现整体执行路径最优",
+    "strategy_overview": "强制`web_page`与`date_dim`使用索引扫描，避免全表扫描",
     "core_optimization_points": [
-      "强制web_returns与customer_address使用HashJoin，因数据量大且无合适索引",
-      "强制cd1与web_returns使用HashJoin，因过滤后结果集仍大",
-      "强制customer_address使用BitmapScan，因多条件过滤",
-      "强制web_sales使用IndexScan，因ws_item_sk和ws_order_number有主键索引",
-      "提升cpu_tuple_cost为0.008，反映真实CPU成本"
+      "`web_page`表仅200行，但原计划使用`Index Only Scan`，已最优",
+      "`date_dim`表有`d_year`索引，且`d_year = 2002`条件选择性高",
+      "强制`date_dim`使用`IndexScan`，避免全表扫描",
+      "结合`Leading`调整顺序，尽早过滤"
     ],
-    "hint_combination": "/*+ HashJoin(web_returns customer_address) HashJoin(cd1 web_returns) BitmapScan(customer_address) IndexScan(web_sales) Set(cpu_tuple_cost 0.008) */",
-    "expected_performance_benefit": "预计降低执行耗时50%-65%，核心收益来自连接与扫描路径协同优化，实现整体最优"
+    "hint_combination": "/*+ IndexScan(date_dim _dta_index_date_dim_6_661577395__k7_k1) Leading( (date_dim web_sales web_returns customer_address customer_demographics cd1 customer_demographics cd2 reason) ) */",
+    "expected_performance_benefit": "预计降低执行耗时10%-20%，核心收益来自`date_dim`表避免全表扫描，减少IO"
   },
   {
     "proposal_id": 13,
-    "strategy_overview": "强制使用并行哈希连接，加速大表连接，提升吞吐量",
+    "strategy_overview": "使用位图扫描加速多条件组合过滤，减少随机IO",
     "core_optimization_points": [
-      "强制web_returns与customer_address使用并行哈希连接",
-      "强制cd1与web_returns使用并行哈希连接",
-      "提升max_parallel_workers_per_gather至12，充分利用多核",
-      "提升work_mem至512MB，防止哈希溢出",
-      "禁用NestLoop，避免低效连接"
+      "`customer_address`表中`ca_country = 'United States'`与`ca_state IN (...)`为多条件组合",
+      "`ca_country`与`ca_state`均无联合索引，但有独立索引",
+      "使用`BitmapScan`构建位图，再批量回表，减少随机IO",
+      "避免`customer_address`全表扫描"
     ],
-    "hint_combination": "/*+ HashJoin(web_returns customer_address) HashJoin(cd1 web_returns) Set(max_parallel_workers_per_gather 12) Set(work_mem '512MB') NoNestLoop(web_returns customer_address) NoNestLoop(cd1 web_returns) */",
-    "expected_performance_benefit": "预计降低执行耗时60%-75%，核心收益来自并行哈希连接大幅提升大表连接吞吐量"
+    "hint_combination": "/*+ BitmapScan(customer_address) Leading( (customer_address web_returns customer_demographics cd1 customer_demographics cd2) date_dim web_sales reason) */",
+    "expected_performance_benefit": "预计降低执行耗时15%-25%，核心收益来自位图扫描减少随机IO，尤其在条件组合多时"
   },
   {
     "proposal_id": 14,
-    "strategy_overview": "优化连接顺序与扫描路径，避免重复扫描与无效连接",
+    "strategy_overview": "禁用嵌套循环，强制所有连接使用哈希连接，提升大表连接效率",
     "core_optimization_points": [
-      "将date_dim与web_sales的连接提前，因d_year=2002选择性高",
-      "强制web_sales使用IndexOnlyScan，因ws_sold_date_sk有索引",
-      "强制web_sales与web_returns使用HashJoin，因连接键有主键索引",
-      "禁用SeqScan，强制使用索引扫描",
-      "提升random_page_cost为1.0，匹配SSD性能"
+      "原计划中`web_returns`与`customer_address`使用嵌套循环，性能极差",
+      "强制所有连接组使用哈希连接，避免嵌套循环",
+      "即使`cd2`为小表，也强制哈希连接，避免逻辑复杂性"
     ],
-    "hint_combination": "/*+ Leading( (date_dim web_sales web_returns) ) IndexOnlyScan(web_sales) HashJoin(web_sales web_returns) NoSeqScan(web_sales) Set(random_page_cost 1.0) */",
-    "expected_performance_benefit": "预计降低执行耗时45%-60%，核心收益来自提前过滤与索引扫描，减少无效连接"
+    "hint_combination": "/*+ NoNestLoop(web_returns customer_address) NoNestLoop(customer_address customer_demographics cd1) NoNestLoop(web_returns customer_demographics cd1) NoNestLoop(web_sales web_returns) HashJoin(web_returns customer_address) HashJoin(customer_address customer_demographics cd1) HashJoin(web_returns customer_demographics cd1) HashJoin(web_sales web_returns) Leading( (date_dim web_sales web_returns customer_address customer_demographics cd1 customer_demographics cd2 reason) ) */",
+    "expected_performance_benefit": "预计降低执行耗时45%-65%，核心收益来自彻底消除嵌套循环，统一使用高效哈希连接"
   },
   {
     "proposal_id": 15,
-    "strategy_overview": "强制使用位图扫描与哈希连接，提升多条件过滤与大表连接效率",
+    "strategy_overview": "通过`Set`调整`effective_cache_size`，引导优化器更准确估计缓存命中率",
     "core_optimization_points": [
-      "强制customer_address使用BitmapScan，因多条件过滤",
-      "强制cd1使用BitmapScan，因多条件过滤",
-      "强制web_returns与customer_address使用HashJoin，因数据量大",
-      "强制cd1与web_returns使用HashJoin，因连接键无索引",
-      "提升work_mem至256MB，防止哈希溢出"
+      "当前`effective_cache_size`默认为2GB，但服务器内存更大",
+      "设置为8GB可使优化器更倾向于使用索引扫描，认为数据更可能在缓存中",
+      "避免误判为全表扫描"
     ],
-    "hint_combination": "/*+ BitmapScan(customer_address) BitmapScan(cd1) HashJoin(web_returns customer_address) HashJoin(cd1 web_returns) Set(work_mem '256MB') */",
-    "expected_performance_benefit": "预计降低执行耗时50%-65%，核心收益来自位图扫描与哈希连接协同优化"
+    "hint_combination": "/*+ Set(effective_cache_size '8GB') Leading( (date_dim web_sales web_returns customer_address customer_demographics cd1 customer_demographics cd2 reason) ) */",
+    "expected_performance_benefit": "预计降低执行耗时10%-20%，核心收益来自优化器更准确估计缓存命中，避免错误选择顺序扫描"
   },
   {
     "proposal_id": 16,
-    "strategy_overview": "重构连接顺序，优先连接小表，控制中间结果集膨胀",
+    "strategy_overview": "强制`web_sales`使用覆盖索引扫描，避免回表并提升并行度",
     "core_optimization_points": [
-      "将reason、web_page、date_dim等小表优先连接",
-      "强制连接顺序为( (reason web_page) (date_dim) )",
-      "强制web_returns与customer_address使用HashJoin",
-      "强制cd1与web_returns使用HashJoin",
-      "提升parallel_setup_cost为0.01，降低并行启动开销"
+      "`web_sales`表的`_dta_index_web_sales_6_1269579561__k1_k4_k5_18`包含`ws_sold_date_sk`, `ws_item_sk`, `ws_bill_customer_sk`, `ws_order_number`",
+      "这些列已覆盖查询所需字段，可作为覆盖索引",
+      "强制使用该索引进行`IndexOnlyScan`，并提升并行度"
     ],
-    "hint_combination": "/*+ Leading( ((reason web_page) (date_dim)) ) HashJoin(web_returns customer_address) HashJoin(cd1 web_returns) Set(parallel_setup_cost 0.01) */",
-    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自小表优先连接，控制中间结果集膨胀"
+    "hint_combination": "/*+ IndexOnlyScan(web_sales _dta_index_web_sales_6_1269579561__k1_k4_k5_18) Parallel(web_sales 8) Leading( (date_dim web_sales web_returns customer_address customer_demographics cd1 customer_demographics cd2 reason) ) */",
+    "expected_performance_benefit": "预计降低执行耗时35%-50%，核心收益来自覆盖索引避免回表，结合并行加速扫描"
   },
   {
     "proposal_id": 17,
-    "strategy_overview": "强制使用仅索引扫描与并行扫描，最大化并行吞吐量",
+    "strategy_overview": "将`reason`表作为驱动表，利用其小表特性提升连接效率",
     "core_optimization_points": [
-      "强制cd1使用IndexOnlyScan，因索引覆盖所有列",
-      "强制customer_address使用IndexOnlyScan，因索引覆盖所有列",
-      "强制web_returns使用Parallel IndexScan，因数据量大",
-      "提升max_parallel_workers_per_gather至16，最大化并行度",
-      "提升work_mem至1GB，防止并行哈希溢出"
+      "`reason`表仅45行，且为等值连接，应作为驱动表",
+      "原计划中`reason`在最后连接，导致`web_returns`扫描后才连接",
+      "将`reason`提前，作为最外层驱动表，快速缩小`web_returns`结果集"
     ],
-    "hint_combination": "/*+ IndexOnlyScan(cd1) IndexOnlyScan(customer_address) Parallel(web_returns 16) Set(max_parallel_workers_per_gather 16) Set(work_mem '1GB') */",
-    "expected_performance_benefit": "预计降低执行耗时65%-80%，核心收益来自并行仅索引扫描，极大提升吞吐量"
+    "hint_combination": "/*+ Leading( (reason web_returns customer_address customer_demographics cd1 customer_demographics cd2) date_dim web_sales) */",
+    "expected_performance_benefit": "预计降低执行耗时20%-35%，核心收益来自小表驱动，快速过滤`web_returns`数据"
   },
   {
     "proposal_id": 18,
-    "strategy_overview": "强制使用合并连接与位图扫描，复用排序并提升过滤效率",
+    "strategy_overview": "禁用顺序扫描，强制所有表使用索引扫描，提升查询效率",
     "core_optimization_points": [
-      "强制customer_address与web_returns使用MergeJoin，因ca_address_sk有序",
-      "强制cd1与web_returns使用MergeJoin，因cd_demo_sk有序",
-      "强制customer_address使用BitmapScan，因多条件过滤",
-      "强制cd1使用BitmapScan，因多条件过滤",
-      "提升effective_cache_size至128GB，提升缓存命中率"
+      "`web_sales`、`web_returns`、`customer_address`等大表应避免顺序扫描",
+      "强制所有表使用`IndexScan`，避免全表扫描",
+      "即使小表也强制索引扫描，确保一致性"
     ],
-    "hint_combination": "/*+ MergeJoin(customer_address web_returns) MergeJoin(cd1 web_returns) BitmapScan(customer_address) BitmapScan(cd1) Set(effective_cache_size '128GB') */",
-    "expected_performance_benefit": "预计降低执行耗时50%-70%，核心收益来自复用排序与位图扫描协同优化"
+    "hint_combination": "/*+ NoSeqScan(web_sales) NoSeqScan(web_returns) NoSeqScan(customer_address) NoSeqScan(customer_demographics) NoSeqScan(date_dim) NoSeqScan(reason) Leading( (date_dim web_sales web_returns customer_address customer_demographics cd1 customer_demographics cd2 reason) ) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自避免任何顺序扫描，强制使用索引扫描"
   },
   {
     "proposal_id": 19,
-    "strategy_overview": "强制使用哈希连接与Memoize缓存，提升大表连接与重复查询效率",
+    "strategy_overview": "使用`Rows` Hint强制中间结果集估计，避免优化器误判连接顺序",
     "core_optimization_points": [
-      "强制web_returns与customer_address使用HashJoin，因数据量大",
-      "强制cd1与web_returns使用HashJoin，因连接键无索引",
-      "在cd1与web_returns连接中启用Memoize，因cd_demo_sk重复率高",
-      "在customer_address与web_returns连接中启用Memoize，因ca_address_sk重复率高",
-      "提升work_mem至512MB，防止哈希溢出"
+      "`web_returns`与`customer_address`连接后实际行数约2.1万，但优化器估计仅1000行",
+      "使用`Rows` Hint强制估计为2.1万，使优化器更倾向于哈希连接",
+      "避免嵌套循环的性能灾难"
     ],
-    "hint_combination": "/*+ HashJoin(web_returns customer_address) HashJoin(cd1 web_returns) Memoize(cd1 web_returns) Memoize(customer_address web_returns) Set(work_mem '512MB') */",
-    "expected_performance_benefit": "预计降低执行耗时55%-70%，核心收益来自哈希连接与Memoize缓存协同优化"
+    "hint_combination": "/*+ Rows(web_returns customer_address 21000) Leading( (customer_address web_returns customer_demographics cd1 customer_demographics cd2) date_dim web_sales reason) */",
+    "expected_performance_benefit": "预计降低执行耗时50%-70%，核心收益来自纠正优化器对中间结果集的严重低估"
   },
   {
     "proposal_id": 20,
-    "strategy_overview": "强制使用仅索引扫描与并行哈希连接，实现极致性能优化",
+    "strategy_overview": "组合使用`Rows`、`Leading`、`HashJoin`与`Parallel`，实现全局最优计划",
     "core_optimization_points": [
-      "强制cd1、customer_address、web_returns使用IndexOnlyScan，完全避免回表",
-      "强制web_returns与customer_address使用并行哈希连接",
-      "强制cd1与web_returns使用并行哈希连接",
-      "提升max_parallel_workers_per_gather至16，最大化并行度",
-      "提升work_mem至2GB，防止并行哈希溢出"
+      "综合所有优化点：校正估计、优化顺序、强制哈希、提升并行",
+      "形成从`date_dim`驱动，`web_sales`覆盖扫描，`web_returns`与`customer_address`哈希连接，`cd1`与`cd2`并行连接的高效路径",
+      "实现全局性能最优"
     ],
-    "hint_combination": "/*+ IndexOnlyScan(cd1) IndexOnlyScan(customer_address) IndexOnlyScan(web_returns) HashJoin(web_returns customer_address) HashJoin(cd1 web_returns) Set(max_parallel_workers_per_gather 16) Set(work_mem '2GB') */",
-    "expected_performance_benefit": "预计降低执行耗时70%-85%，核心收益来自并行哈希连接与仅索引扫描协同，实现极致性能"
+    "hint_combination": "/*+ Rows(date_dim web_sales *0.05) Rows(web_returns customer_address *21) Leading( (date_dim web_sales web_returns (customer_address customer_demographics cd1) customer_demographics cd2 reason) ) HashJoin(web_returns customer_address) HashJoin(customer_address customer_demographics cd1) HashJoin(web_returns customer_demographics cd1) Parallel(web_returns 8) Parallel(customer_address 8) Parallel(customer_demographics cd1 4) */",
+    "expected_performance_benefit": "预计降低执行耗时65%-85%，核心收益来自多维度协同优化，实现全局最优执行计划"
   }
 ]
 ```
