@@ -861,37 +861,43 @@ def run_one_proposal(proposal_id: int, label: str, hint: str, sql_content: str, 
 
 def _print_results_table(results, header: str = None, output_file = None):
     baseline_ms = None
+    lero_ms = None
     for r in results:
         if r["label"] == "baseline" and r["status"] == "ok":
             baseline_ms = r["elapsed_ms"]
-            break
+        if r["label"] == "lero-baseline" and r["status"] == "ok":
+            lero_ms = r["elapsed_ms"]
 
-    headers = ["Proposal ID", "Label", "Elapsed (ms)", "Speedup", "Status", "Error"]
+    headers = ["Proposal ID", "Label", "Elapsed (ms)", "Speedup", "Speedup-Lero", "Status", "Error"]
     rows = []
     for r in results:
         if r["status"] == "ok":
             elapsed = f"{r['elapsed_ms']:.2f}"
             speedup = f"{baseline_ms / r['elapsed_ms']:.2f}x" if baseline_ms else "N/A"
+            speedup_lero = f"{lero_ms / r['elapsed_ms']:.2f}x" if lero_ms else "N/A"
             err = ""
         elif r["status"] == "hint_error":
             elapsed = f"{r['elapsed_ms']:.2f}"
             speedup = f"{baseline_ms / r['elapsed_ms']:.2f}x" if baseline_ms else "N/A"
+            speedup_lero = f"{lero_ms / r['elapsed_ms']:.2f}x" if lero_ms else "N/A"
             err = r.get("error_msg", "")
             if len(err) > 60:
                 err = err[:57] + "..."
         elif r["status"] == "timeout":
             elapsed = "timeout"
             speedup = "N/A"
+            speedup_lero = "N/A"
             err = r.get("error_msg", "")
             if len(err) > 60:
                 err = err[:57] + "..."
         else:
             elapsed = "error"
             speedup = "N/A"
+            speedup_lero = "N/A"
             err = r.get("error_msg", "")
             if len(err) > 60:
                 err = err[:57] + "..."
-        rows.append([str(r["proposal_id"]), r["label"], elapsed, speedup, r["status"], err])
+        rows.append([str(r["proposal_id"]), r["label"], elapsed, speedup, speedup_lero, r["status"], err])
 
     widths = [max(len(str(row[i])) for row in [headers] + rows) for i in range(len(headers))]
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
@@ -1061,9 +1067,20 @@ def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None,
 
     results = []
 
+    lero_opts = DbOptions(
+        host="127.0.0.1",
+        port=5432,
+        user="liujianzhong",
+        database=opts.database,
+    )
+
     try:
         logger.info("Running baseline (no hint)...")
         results.append(run_one_proposal(0, "baseline", "", sql_content, opts))
+
+        logger.info("Running lero-baseline (SET enable_lero TO True)...")
+        lero_sql = f"SET enable_lero TO True;\n{sql_content}"
+        results.append(run_one_proposal(1, "lero-baseline", "", lero_sql, lero_opts))
 
         for p in proposals:
             pid = p.get("proposal_id")
