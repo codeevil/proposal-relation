@@ -1,0 +1,46 @@
+Finalize Aggregate  (cost=366516.19..366516.20 rows=1 width=64) (actual time=1035.621..1062.742 rows=1 loops=1)
+  ->  Gather  (cost=366515.86..366516.17 rows=3 width=64) (actual time=1028.132..1062.733 rows=4 loops=1)
+        Workers Planned: 3
+        Workers Launched: 3
+        ->  Partial Aggregate  (cost=365515.86..365515.87 rows=1 width=64) (actual time=1018.480..1018.944 rows=1 loops=4)
+              ->  Parallel Hash Join  (cost=337703.09..353622.70 rows=2378632 width=33) (actual time=939.181..1007.029 rows=80751 loops=4)
+                    Hash Cond: (an1.person_id = n1.id)
+                    ->  Parallel Seq Scan on aka_name an1  (cost=0.00..14303.56 rows=290756 width=20) (actual time=0.020..16.961 rows=225336 loops=4)
+                    ->  Parallel Hash  (cost=328284.01..328284.01 rows=753526 width=25) (actual time=933.531..933.994 rows=71384 loops=4)
+                          Buckets: 4194304  Batches: 1  Memory Usage: 49824kB
+                          ->  Nested Loop  (cost=212822.12..328284.01 rows=753526 width=25) (actual time=452.442..902.890 rows=71384 loops=4)
+                                ->  Hash Join  (cost=212821.68..277613.88 rows=753526 width=21) (actual time=452.380..847.684 rows=71384 loops=4)
+                                      Hash Cond: (t.id = ci.movie_id)
+                                      ->  Parallel Hash Join  (cost=38585.10..84037.96 rows=236779 width=25) (actual time=283.355..563.406 rows=288450 loops=4)
+                                            Hash Cond: (t.id = mc.movie_id)
+                                            ->  Parallel Seq Scan on title t  (cost=0.00..42318.77 rows=632077 width=21) (actual time=0.006..49.567 rows=632078 loops=4)
+                                            ->  Parallel Hash  (cost=34766.09..34766.09 rows=305521 width=4) (actual time=282.026..282.483 rows=288450 loops=4)
+                                                  Buckets: 2097152 (originally 1048576)  Batches: 1 (originally 1)  Memory Usage: 69760kB
+                                                  ->  Parallel Hash Join  (cost=5350.16..34766.09 rows=305521 width=4) (actual time=19.869..179.165 rows=288450 loops=4)
+                                                        Hash Cond: (mc.company_id = cn.id)
+                                                        ->  Parallel Seq Scan on movie_companies mc  (cost=0.00..27206.55 rows=841655 width=8) (actual time=0.022..50.187 rows=652282 loops=4)
+                                                        ->  Parallel Hash  (cost=4722.92..4722.92 rows=50179 width=4) (actual time=19.456..19.457 rows=21211 loops=4)
+                                                              Buckets: 131072  Batches: 1  Memory Usage: 4416kB
+                                                              ->  Parallel Seq Scan on company_name cn  (cost=0.00..4722.92 rows=50179 width=4) (actual time=0.029..13.930 rows=21211 loops=4)
+                                                                    Filter: ((country_code)::text = '[us]'::text)
+                                                                    Rows Removed by Filter: 37538
+                                      ->  Hash  (cost=124703.17..124703.17 rows=3019153 width=8) (actual time=153.378..153.379 rows=276403 loops=4)
+                                            Buckets: 4194304  Batches: 2  Memory Usage: 38156kB
+                                            ->  Nested Loop  (cost=0.44..124703.17 rows=3019153 width=8) (actual time=17.608..99.739 rows=276403 loops=4)
+                                                  ->  Seq Scan on role_type rt  (cost=0.00..1.15 rows=1 width=4) (actual time=0.031..0.034 rows=1 loops=4)
+                                                        Filter: ((role)::text = 'costume designer'::text)
+                                                        Rows Removed by Filter: 11
+                                                  ->  Index Scan using role_id_cast_info on cast_info ci  (cost=0.44..91765.81 rows=3293621 width=12) (actual time=17.573..74.677 rows=276403 loops=4)
+                                                        Index Cond: (role_id = rt.id)
+                                ->  Memoize  (cost=0.44..0.46 rows=1 width=4) (actual time=0.001..0.001 rows=1 loops=285538)
+                                      Cache Key: ci.person_id
+                                      Cache Mode: logical
+                                      Hits: 67452  Misses: 7497  Evictions: 0  Overflows: 0  Memory Usage: 762kB
+                                      Worker 0:  Hits: 55504  Misses: 6520  Evictions: 0  Overflows: 0  Memory Usage: 663kB
+                                      Worker 1:  Hits: 67383  Misses: 7520  Evictions: 0  Overflows: 0  Memory Usage: 764kB
+                                      Worker 2:  Hits: 66314  Misses: 7348  Evictions: 0  Overflows: 0  Memory Usage: 747kB
+                                      ->  Index Only Scan using name_pkey on name n1  (cost=0.43..0.45 rows=1 width=4) (actual time=0.004..0.004 rows=1 loops=28885)
+                                            Index Cond: (id = ci.person_id)
+                                            Heap Fetches: 0
+Planning Time: 5.138 ms
+Execution Time: 1067.173 ms

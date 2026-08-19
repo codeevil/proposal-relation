@@ -1,0 +1,244 @@
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "校正严重行数估计偏差，强制哈希连接并优化连接顺序，彻底解决嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "识别name表过滤后实际行数远高于估计值（1692 vs 24），使用Rows Hint校正其输出行数",
+      "将name作为驱动表，强制以左深树顺序连接，避免中间结果膨胀",
+      "强制cast_info与role_type使用HashJoin，替代低效的嵌套循环连接",
+      "通过Rows Hint修正cast_info与name连接后的中间结果集估计，消除嵌套循环的指数级开销"
+    ],
+    "hint_combination": "/*+ Rows(name *70.5) Leading( (name an ci rt chn mc cn mi t it) ) HashJoin(ci rt) HashJoin(name an) HashJoin(ci an) Rows(ci *0.00003) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自纠正name表行数估计偏差（实际为估计值的70倍），避免嵌套循环对cast_info的数万次重复扫描"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "强制使用仅索引扫描覆盖关键过滤列，消除回表IO开销，提升扫描效率",
+    "core_optimization_points": [
+      "name表中name LIKE '%Ang%'与gender='f'组合选择性高，但未使用覆盖索引",
+      "强制name表使用IndexOnlyScan，利用person_id_aka_name索引避免回表",
+      "对aka_name表启用IndexOnlyScan，因仅需person_id字段",
+      "对cast_info表启用IndexOnlyScan，仅需person_id与movie_id即可满足连接"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(name person_id_aka_name) IndexOnlyScan(aka_name person_id_aka_name) IndexOnlyScan(cast_info person_id_cast_info) IndexOnlyScan(cast_info movie_id_cast_info) */",
+    "expected_performance_benefit": "预计执行耗时降低45%-60%，核心收益来自消除name、aka_name、cast_info的回表IO，显著减少随机页读取"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "重构连接顺序为灌木树结构，先聚合小结果集再与大表连接，控制中间结果膨胀",
+    "core_optimization_points": [
+      "将role_type与cast_info先连接，结果集极小（1行）",
+      "将movie_companies与company_name先连接，结果集小且过滤严格",
+      "将movie_info与info_type先连接，结果集受info='release dates'限制",
+      "将name与aka_name先连接，形成演员别名组，再与cast_info连接"
+    ],
+    "hint_combination": "/*+ Leading( ( (rt ci) (mc cn) (mi it) (n an) ) ) HashJoin(rt ci) HashJoin(mc cn) HashJoin(mi it) HashJoin(n an) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自提前聚合小结果集，避免大表（如cast_info）被多次循环扫描"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "强制哈希连接替代嵌套循环，解决因连接键选择性差导致的性能劣化",
+    "core_optimization_points": [
+      "cast_info表note字段选择性差（n_distinct=3851，总行数36M），嵌套循环效率低下",
+      "强制cast_info与role_type使用HashJoin，避免对role_type的重复扫描",
+      "强制cast_info与name使用HashJoin，避免name作为内表被循环扫描",
+      "对cast_info与movie_companies启用HashJoin，提升连接效率"
+    ],
+    "hint_combination": "/*+ HashJoin(ci rt) HashJoin(ci n) HashJoin(ci mc) HashJoin(ci t) HashJoin(ci chn) */",
+    "expected_performance_benefit": "预计执行耗时降低55%-70%，核心收益来自将嵌套循环的O(n²)复杂度降为O(n)，尤其在cast_info大表场景下效果显著"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "通过并行扫描加速大表扫描，利用多核资源并行处理数据",
+    "core_optimization_points": [
+      "name表扫描实际耗时80ms，但仅使用1个Worker，未充分利用并行能力",
+      "强制name表启用4个并行Worker，加速LIKE过滤扫描",
+      "对cast_info表启用4个并行Worker，加速大表扫描",
+      "对movie_info表启用4个并行Worker，提升info筛选效率"
+    ],
+    "hint_combination": "/*+ Parallel(name 4) Parallel(cast_info 4) Parallel(movie_info 4) Parallel(movie_companies 2) */",
+    "expected_performance_benefit": "预计执行耗时降低35%-50%，核心收益来自并行加速大表扫描，尤其在name和cast_info等大表上效果明显"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "校正优化器对连接结果集的严重低估，通过Rows Hint强制修正中间结果规模",
+    "core_optimization_points": [
+      "name与aka_name连接后实际输出1692行，但优化器估计仅24行，偏差达70倍",
+      "对name与aka_name连接使用Rows Hint进行乘法校正",
+      "对cast_info与name连接使用Rows Hint，修正嵌套循环的外层行数",
+      "对movie_companies与movie_info连接使用Rows Hint，避免中间结果膨胀"
+    ],
+    "hint_combination": "/*+ Rows(name an *70.5) Rows(ci n *0.00003) Rows(mc mi *0.0001) Rows(ci mc *0.00002) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自修正优化器对中间结果集的严重低估，使其选择更合理的连接方法"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "优先使用覆盖索引实现仅索引扫描，减少I/O开销，提升整体吞吐",
+    "core_optimization_points": [
+      "name表中name与gender字段组合可被索引覆盖",
+      "强制name表使用IndexOnlyScan，利用name_pkey或person_id_aka_name索引",
+      "对aka_name表启用IndexOnlyScan，因仅需person_id",
+      "对cast_info表启用IndexOnlyScan，因连接所需字段在索引中"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(name name_pkey) IndexOnlyScan(aka_name person_id_aka_name) IndexOnlyScan(cast_info person_id_cast_info) IndexOnlyScan(cast_info movie_id_cast_info) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自避免回表IO，尤其在name和cast_info等大表上效果显著"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "强制合并连接利用索引排序优势，避免哈希构建开销",
+    "core_optimization_points": [
+      "cast_info表movie_id字段有索引，天然有序",
+      "强制cast_info与title使用MergeJoin，复用索引排序",
+      "强制cast_info与movie_companies使用MergeJoin，提升连接效率",
+      "对name表启用MergeJoin，利用name索引排序"
+    ],
+    "hint_combination": "/*+ MergeJoin(ci t) MergeJoin(ci mc) MergeJoin(ci n) MergeJoin(ci rt) */",
+    "expected_performance_benefit": "预计执行耗时降低45%-60%，核心收益来自避免哈希构建与探测开销，尤其在大表连接场景下优势明显"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "禁用嵌套循环连接，强制使用哈希连接，避免小表驱动大表的性能陷阱",
+    "core_optimization_points": [
+      "优化器错误选择嵌套循环连接，导致大表被多次扫描",
+      "强制禁用NestLoop，强制使用HashJoin连接所有大表",
+      "对name与cast_info、cast_info与movie_companies等连接强制哈希连接",
+      "避免嵌套循环在大表上产生指数级开销"
+    ],
+    "hint_combination": "/*+ NoNestLoop(name ci) NoNestLoop(ci mc) NoNestLoop(ci mi) NoNestLoop(ci t) NoNestLoop(ci chn) HashJoin(name ci) HashJoin(ci mc) HashJoin(ci mi) HashJoin(ci t) HashJoin(ci chn) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-75%，核心收益来自彻底消除嵌套循环的性能陷阱，尤其在cast_info大表上效果显著"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "调整代价模型参数，匹配SSD存储环境，优化连接方法选择",
+    "core_optimization_points": [
+      "当前random_page_cost=4.0，适用于HDD，不适用于SSD",
+      "将random_page_cost调至1.1，降低哈希连接与索引扫描代价",
+      "提升cpu_tuple_cost以反映现代CPU性能，优化CPU密集型操作",
+      "提升work_mem以减少排序/哈希磁盘溢出"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.1) Set(cpu_tuple_cost 0.005) Set(work_mem '64MB') Set(effective_cache_size '2GB') */",
+    "expected_performance_benefit": "预计执行耗时降低30%-45%，核心收益来自更真实反映SSD性能的代价模型，促使优化器选择更优连接方法"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "通过Memoize缓存避免重复查询，提升嵌套循环内表访问效率",
+    "core_optimization_points": [
+      "name表被多次用于连接，但其过滤条件稳定",
+      "对name与cast_info连接启用Memoize缓存",
+      "对cast_info与movie_companies连接启用Memoize缓存",
+      "避免对相同name值重复扫描cast_info"
+    ],
+    "hint_combination": "/*+ Memoize(name ci) Memoize(ci mc) Memoize(ci mi) Memoize(ci t) */",
+    "expected_performance_benefit": "预计执行耗时降低25%-40%，核心收益来自避免重复扫描，尤其在name表结果集较小时效果显著"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "强制位图扫描处理多条件组合过滤，减少随机IO开销",
+    "core_optimization_points": [
+      "movie_info表info字段存在多条件LIKE过滤，适合位图扫描",
+      "强制movie_info表使用BitmapScan，结合info_type_id与info字段索引",
+      "对cast_info表note字段使用BitmapScan处理LIKE条件",
+      "减少随机页读取次数"
+    ],
+    "hint_combination": "/*+ BitmapScan(movie_info info_type_id_movie_info) BitmapScan(movie_info movie_id_movie_info) BitmapScan(cast_info note) */",
+    "expected_performance_benefit": "预计执行耗时降低35%-50%，核心收益来自位图扫描减少随机IO，尤其在多条件过滤场景下优势明显"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "禁用顺序扫描，强制使用索引扫描，避免大表全表扫描",
+    "core_optimization_points": [
+      "name表过滤选择性高，但优化器仍选择SeqScan",
+      "强制name表使用IndexScan，避免全表扫描",
+      "对cast_info表启用IndexScan，避免全表扫描",
+      "对movie_info表启用IndexScan，提升过滤效率"
+    ],
+    "hint_combination": "/*+ NoSeqScan(name) NoSeqScan(cast_info) NoSeqScan(movie_info) IndexScan(name person_id_aka_name) IndexScan(cast_info person_id_cast_info) IndexScan(movie_info movie_id_movie_info) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自避免大表全表扫描，尤其在name和cast_info上效果显著"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "优化连接顺序，将大表连接延迟到后期，控制中间结果集增长",
+    "core_optimization_points": [
+      "将title、movie_companies、movie_info等大表连接延迟到最后",
+      "先连接小表（如role_type、company_name）形成小结果集",
+      "再与cast_info连接，避免早期连接产生大中间结果",
+      "避免cast_info与title的连接过早发生"
+    ],
+    "hint_combination": "/*+ Leading( (rt cn mc mi it) (ci n an chn) (t) ) */",
+    "expected_performance_benefit": "预计执行耗时降低45%-60%，核心收益来自控制中间结果集增长，避免早期连接产生超大中间结果"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "强制使用覆盖索引实现仅索引扫描，避免回表开销",
+    "core_optimization_points": [
+      "name表中name与gender字段组合可被索引覆盖",
+      "强制name表使用IndexOnlyScan，利用name_pkey索引",
+      "对aka_name表启用IndexOnlyScan，因仅需person_id",
+      "对cast_info表启用IndexOnlyScan，因连接所需字段在索引中"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(name name_pkey) IndexOnlyScan(aka_name person_id_aka_name) IndexOnlyScan(cast_info person_id_cast_info) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自避免回表IO，显著减少随机页读取"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "通过Set Hint调整并行控制参数，提升大表扫描并行度",
+    "core_optimization_points": [
+      "当前max_parallel_workers_per_gather可能限制并行度",
+      "提升max_parallel_workers_per_gather至8，加速大表扫描",
+      "降低parallel_setup_cost，降低并行启动开销",
+      "提升parallel_tuple_cost以反映现代CPU性能"
+    ],
+    "hint_combination": "/*+ Set(max_parallel_workers_per_gather 8) Set(parallel_setup_cost 0.1) Set(parallel_tuple_cost 0.001) */",
+    "expected_performance_benefit": "预计执行耗时降低35%-50%，核心收益来自提升并行扫描能力，尤其在name和cast_info上效果显著"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "禁用不必要的并行扫描，避免小表并行开销",
+    "core_optimization_points": [
+      "role_type表仅12行，但被并行扫描",
+      "强制role_type表禁用并行扫描",
+      "对info_type表禁用并行扫描",
+      "对company_name表禁用并行扫描"
+    ],
+    "hint_combination": "/*+ Parallel(role_type 0) Parallel(info_type 0) Parallel(company_name 0) */",
+    "expected_performance_benefit": "预计执行耗时降低15%-25%，核心收益来自避免小表并行扫描的启动开销，提升整体效率"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "强制哈希连接处理等值连接，避免嵌套循环的重复扫描",
+    "core_optimization_points": [
+      "cast_info与role_type连接为等值连接，但优化器选择嵌套循环",
+      "强制cast_info与role_type使用HashJoin",
+      "强制cast_info与movie_companies使用HashJoin",
+      "强制cast_info与title使用HashJoin"
+    ],
+    "hint_combination": "/*+ HashJoin(ci rt) HashJoin(ci mc) HashJoin(ci t) HashJoin(ci chn) HashJoin(ci n) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自将嵌套循环的O(n²)复杂度降为O(n)，尤其在cast_info大表上效果显著"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "通过Rows Hint校正连接结果集估计，解决优化器误判问题",
+    "core_optimization_points": [
+      "name表过滤后实际行数远高于估计值",
+      "对name与aka_name连接使用Rows Hint校正",
+      "对cast_info与name连接使用Rows Hint校正",
+      "对movie_companies与movie_info连接使用Rows Hint校正"
+    ],
+    "hint_combination": "/*+ Rows(name an *70.5) Rows(ci n *0.00003) Rows(mc mi *0.0001) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自修正优化器对中间结果集的严重低估，使其选择更合理的连接方法"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "优化连接顺序，先连接小表形成小结果集，再与大表连接",
+    "core_optimization_points": [
+      "将role_type、info_type、company_name等小表先连接",
+      "形成小结果集后与cast_info连接",
+      "避免cast_info与title等大表过早连接",
+      "控制中间结果集增长"
+    ],
+    "hint_combination": "/*+ Leading( (rt it cn) (ci mc) (mi) (n an) (t) ) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自控制中间结果集增长，避免早期连接产生超大中间结果"
+  }
+]
+```

@@ -1,0 +1,244 @@
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "校正严重低估的中间结果集规模，强制哈希连接并优化连接顺序，彻底解决嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "识别出`movie_keyword`与`movie_link`连接后实际行数远超估计（1460 vs 31），修正其连接结果集估计",
+      "将`movie_keyword`与`movie_link`的连接方式由嵌套循环强制改为哈希连接，避免千万级循环扫描",
+      "调整连接顺序，使小结果集`keyword`先行过滤，再与`movie_keyword`连接，控制中间结果膨胀",
+      "通过`Rows` Hint校正`mk`与`ml`连接后的行数估计，消除优化器对`movie_keyword`扫描结果的严重低估"
+    ],
+    "hint_combination": "/*+ Rows(mk ml *47.1) Leading( (k mk ml) ) HashJoin(mk ml) HashJoin(k mk ml) Parallel(movie_keyword 4) Parallel(movie_link 4) */",
+    "expected_performance_benefit": "预计执行耗时下降60%-80%，核心收益来自消除`movie_keyword`与`movie_link`之间嵌套循环的指数级循环开销，同时并行加速大表扫描"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "强制使用覆盖索引仅索引扫描，避免`movie_companies`与`company_name`回表开销",
+    "core_optimization_points": [
+      "发现`movie_companies`表中`note IS NOT NULL`过滤选择性高（null_frac=0.48），且`movie_id`有索引",
+      "识别`movie_companies`与`company_name`连接中，`company_id`字段在`movie_companies`索引中存在，可实现覆盖扫描",
+      "强制对`movie_companies`使用`movie_id_movie_companies`索引进行仅索引扫描，避免回表",
+      "通过`IndexOnlyScan`提升扫描效率，减少随机IO"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(movie_companies movie_id_movie_companies) NoIndexScan(movie_companies) NoSeqScan(movie_companies) NoBitmapScan(movie_companies) */",
+    "expected_performance_benefit": "预计降低执行耗时25%-35%，核心收益来自消除`movie_companies`表中对`company_name`的回表访问，减少大量随机IO"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "优化连接顺序，将`title`与`movie_keyword`的连接前置，尽早过滤大表数据",
+    "core_optimization_points": [
+      "`title`表中`production_year > 1950`条件选择性高（n_distinct=123，总行数252万），应尽早应用",
+      "原计划中`title`在嵌套循环末尾才被扫描，导致中间结果集过大",
+      "将`title`与`movie_keyword`的连接提前至最内层，利用`movie_id`索引快速过滤",
+      "通过`Leading`控制连接顺序，使高选择性过滤尽早执行"
+    ],
+    "hint_combination": "/*+ Leading( (k mk t) ) HashJoin(mk t) NoNestLoop(mk t) Parallel(movie_keyword 4) Parallel(title 4) */",
+    "expected_performance_benefit": "预计降低执行耗时30%-45%，核心收益来自提前过滤`title`表中超过97%的旧电影数据，大幅缩小后续连接输入规模"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "强制启用并行扫描，提升大表`movie_keyword`与`movie_link`的扫描效率",
+    "core_optimization_points": [
+      "`movie_keyword`表大小达24454页（约192MB），`movie_link`达163页（约1.3MB），具备并行扫描潜力",
+      "原计划中`movie_keyword`使用并行扫描（Workers Launched: 3），但`movie_link`未并行",
+      "强制对`movie_keyword`和`movie_link`启用并行扫描，提升I/O吞吐",
+      "通过`Parallel` Hint显式控制并行度，避免优化器低估并行收益"
+    ],
+    "hint_combination": "/*+ Parallel(movie_keyword 4) Parallel(movie_link 4) Parallel(title 4) Parallel(movie_companies 4) */",
+    "expected_performance_benefit": "预计降低执行耗时20%-30%，核心收益来自利用多核并行加速大表扫描，尤其对`movie_keyword`的145万行扫描有显著加速"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "修正`keyword`表的过滤选择性估计，强制使用索引扫描避免全表扫描",
+    "core_optimization_points": [
+      "`keyword`表中`keyword IN ('sequel','revenge','based-on-novel')`条件选择性极高（仅3个值）",
+      "原计划中`keyword`表被`Memoize`缓存，但未强制使用索引扫描，存在潜在全表扫描风险",
+      "强制对`keyword`使用主键索引进行索引扫描，确保高效定位",
+      "通过`IndexScan`避免`Memoize`中不必要的重复查询"
+    ],
+    "hint_combination": "/*+ IndexScan(keyword keyword_pkey) NoSeqScan(keyword) NoBitmapScan(keyword) NoIndexOnlyScan(keyword) */",
+    "expected_performance_benefit": "预计降低执行耗时15%-25%，核心收益来自避免`keyword`表全表扫描，将3行过滤提升为O(log N)索引查找"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "禁用`Memoize`缓存，避免在大结果集上重复执行内表查询，减少CPU开销",
+    "core_optimization_points": [
+      "`Memoize`在`mk.keyword_id`上缓存，但`mk`表扫描后实际`keyword_id`去重后仅1000+个，缓存命中率低",
+      "原计划中`Memoize`耗时极高（Worker 0: 176203 hits, 36209 misses），存在大量缓存重建开销",
+      "禁用`Memoize`，改用直接索引扫描，减少缓存管理与内存开销",
+      "通过`NoMemoize`显式控制，避免优化器误判缓存收益"
+    ],
+    "hint_combination": "/*+ NoMemoize(mk k) NoIndexOnlyScan(mk) */",
+    "expected_performance_benefit": "预计降低执行耗时10%-20%，核心收益来自消除`Memoize`的缓存管理开销，尤其在高并发Worker环境下更明显"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "强制`movie_companies`与`company_type`使用哈希连接，避免嵌套循环性能退化",
+    "core_optimization_points": [
+      "`movie_companies`表行数260万，`company_type`仅4行，嵌套循环会触发大表对小表的多次扫描",
+      "原计划中使用`HashJoin`，但未强制，存在优化器误选风险",
+      "强制使用哈希连接，将小表`company_type`构建哈希表，大表逐行探测",
+      "通过`HashJoin` Hint确保连接方法正确"
+    ],
+    "hint_combination": "/*+ HashJoin(mc ct) NoNestLoop(mc ct) */",
+    "expected_performance_benefit": "预计降低执行耗时15%-25%，核心收益来自避免`movie_companies`表对`company_type`的260万次扫描，显著降低CPU与IO"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "优化`company_name`表扫描路径，使用覆盖索引避免回表，提升连接效率",
+    "core_optimization_points": [
+      "`company_name`表中`country_code != '[pl]'`条件过滤选择性高（n_distinct=166，null_frac=0.10）",
+      "原计划中`company_name`使用主键索引扫描，但`name`字段未在索引中，需回表",
+      "强制使用`company_name_pkey`索引进行仅索引扫描，避免回表",
+      "通过`IndexOnlyScan`提升效率"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(company_name company_name_pkey) NoSeqScan(company_name) NoIndexScan(company_name) */",
+    "expected_performance_benefit": "预计降低执行耗时10%-18%，核心收益来自避免`company_name`表的回表访问，减少随机IO"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "调整`link_type`与`movie_link`连接顺序，避免大表全表扫描",
+    "core_optimization_points": [
+      "`link_type`表仅18行，`movie_link`表29997行，应以`link_type`为驱动表",
+      "原计划中`movie_link`为外层表，导致`link_type`全表扫描",
+      "强制`link_type`先扫描，再与`movie_link`连接，减少扫描行数",
+      "通过`Leading`控制连接顺序"
+    ],
+    "hint_combination": "/*+ Leading( (lt ml) ) HashJoin(lt ml) NoNestLoop(lt ml) */",
+    "expected_performance_benefit": "预计降低执行耗时12%-20%，核心收益来自避免`movie_link`对`link_type`的嵌套循环扫描，减少IO"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "强制`title`表使用`title_pkey`索引扫描，避免全表扫描",
+    "core_optimization_points": [
+      "`title`表中`production_year > 1950`条件可利用`id`索引进行快速定位",
+      "原计划中`title`表使用`title_pkey`索引扫描，但未强制，存在误判风险",
+      "强制使用主键索引扫描，确保高效访问",
+      "通过`IndexScan`显式控制"
+    ],
+    "hint_combination": "/*+ IndexScan(title title_pkey) NoSeqScan(title) */",
+    "expected_performance_benefit": "预计降低执行耗时8%-15%，核心收益来自确保`title`表访问路径最优，避免潜在全表扫描"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "提升`work_mem`参数，避免哈希连接与排序磁盘溢出，提升大连接性能",
+    "core_optimization_points": [
+      "执行计划中`Hash Join`未显示`Hash Buckets`或`Hash Batches`，但`movie_companies`等大表连接可能溢出",
+      "`work_mem`默认值通常为4MB，大哈希表可能落盘，导致性能骤降",
+      "临时提升`work_mem`至128MB，确保哈希表可完全驻留内存",
+      "通过`Set` Hint控制内存参数"
+    ],
+    "hint_combination": "/*+ Set(work_mem '128MB') Set(random_page_cost 1.1) */",
+    "expected_performance_benefit": "预计降低执行耗时20%-35%，核心收益来自避免哈希连接与排序的磁盘溢出，显著提升大连接效率"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "强制`movie_keyword`与`movie_companies`连接使用哈希连接，避免嵌套循环",
+    "core_optimization_points": [
+      "`movie_keyword`与`movie_companies`连接后实际行数14916，原计划使用嵌套循环，效率低",
+      "两表连接键为`movie_id`，均有索引，适合哈希连接",
+      "强制使用哈希连接，避免大表对小表的多次扫描",
+      "通过`HashJoin` Hint确保连接方法"
+    ],
+    "hint_combination": "/*+ HashJoin(mk mc) NoNestLoop(mk mc) */",
+    "expected_performance_benefit": "预计降低执行耗时15%-25%，核心收益来自避免`movie_companies`表对`movie_keyword`的多次扫描"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "禁用`company_type`表的顺序扫描，强制使用索引扫描提升连接效率",
+    "core_optimization_points": [
+      "`company_type`表仅4行，应使用索引扫描而非顺序扫描",
+      "原计划中`company_type`使用`Seq Scan`，虽小但无必要",
+      "强制使用主键索引扫描，提升效率",
+      "通过`IndexScan`显式控制"
+    ],
+    "hint_combination": "/*+ IndexScan(company_type company_type_pkey) NoSeqScan(company_type) */",
+    "expected_performance_benefit": "预计降低执行耗时5%-10%，核心收益来自确保小表访问路径最优"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "优化`movie_link`表扫描路径，使用覆盖索引避免回表",
+    "core_optimization_points": [
+      "`movie_link`表中`movie_id`有索引，且查询仅需`movie_id`与`link_type_id`",
+      "原计划中`movie_link`使用`movie_id_movie_link`索引扫描，但可能回表",
+      "强制使用`movie_id_movie_link`索引进行仅索引扫描",
+      "通过`IndexOnlyScan`提升效率"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(movie_link movie_id_movie_link) NoSeqScan(movie_link) */",
+    "expected_performance_benefit": "预计降低执行耗时8%-12%，核心收益来自避免`movie_link`表的回表访问"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "强制`title`表与`movie_keyword`使用合并连接，复用索引排序结果",
+    "core_optimization_points": [
+      "`title`与`movie_keyword`连接键为`movie_id`，两表均有索引，数据天然有序",
+      "原计划中使用嵌套循环，未复用排序",
+      "强制使用合并连接，复用索引排序，避免排序开销",
+      "通过`MergeJoin` Hint确保连接方法"
+    ],
+    "hint_combination": "/*+ MergeJoin(t mk) NoNestLoop(t mk) */",
+    "expected_performance_benefit": "预计降低执行耗时10%-18%，核心收益来自复用索引排序，避免额外排序开销"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "强制`keyword`表使用索引扫描，避免全表扫描导致性能下降",
+    "core_optimization_points": [
+      "`keyword`表中`keyword IN (...)`条件应通过索引快速定位",
+      "原计划中`keyword`使用`Seq Scan`，但仅3行匹配，效率低",
+      "强制使用主键索引扫描，提升过滤效率",
+      "通过`IndexScan`显式控制"
+    ],
+    "hint_combination": "/*+ IndexScan(keyword keyword_pkey) NoSeqScan(keyword) */",
+    "expected_performance_benefit": "预计降低执行耗时12%-20%，核心收益来自避免小表全表扫描"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "调整`movie_companies`与`company_name`连接顺序，避免大表驱动小表",
+    "core_optimization_points": [
+      "`movie_companies`表260万行，`company_name`表23万行，应以`company_name`为驱动表",
+      "原计划中`movie_companies`为外层表，导致`company_name`被多次扫描",
+      "强制`company_name`为驱动表，提升连接效率",
+      "通过`Leading`控制连接顺序"
+    ],
+    "hint_combination": "/*+ Leading( (cn mc) ) HashJoin(cn mc) NoNestLoop(cn mc) */",
+    "expected_performance_benefit": "预计降低执行耗时10%-18%，核心收益来自避免`movie_companies`对`company_name`的多次扫描"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "提升`max_parallel_workers_per_gather`参数，释放并行潜力",
+    "core_optimization_points": [
+      "大表扫描与哈希连接已启用并行，但并行度受限于`max_parallel_workers_per_gather`默认值",
+      "当前计划中`movie_keyword`启用4个Worker，但`max_parallel_workers_per_gather`可能较低",
+      "临时提升该参数至8，释放更多并行资源",
+      "通过`Set` Hint控制"
+    ],
+    "hint_combination": "/*+ Set(max_parallel_workers_per_gather 8) */",
+    "expected_performance_benefit": "预计降低执行耗时15%-25%，核心收益来自释放更多并行资源，加速大表扫描"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "强制`movie_companies`表使用`company_id`索引扫描，避免全表扫描",
+    "core_optimization_points": [
+      "`movie_companies`表中`company_id`有索引，且查询中`company_id`为连接键",
+      "原计划中`movie_companies`使用`movie_id_movie_companies`索引，但`company_id`为连接键，应优先使用`company_id`索引",
+      "强制使用`company_id_movie_companies`索引扫描，提升连接效率",
+      "通过`IndexScan`显式控制"
+    ],
+    "hint_combination": "/*+ IndexScan(movie_companies company_id_movie_companies) NoIndexScan(movie_companies movie_id_movie_companies) */",
+    "expected_performance_benefit": "预计降低执行耗时10%-18%，核心收益来自使用更合适的连接键索引"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "禁用`movie_link`表的顺序扫描，强制使用索引扫描提升效率",
+    "core_optimization_points": [
+      "`movie_link`表中`movie_id`有索引，应使用索引扫描而非顺序扫描",
+      "原计划中`movie_link`使用`movie_id_movie_link`索引扫描，但未强制",
+      "强制使用索引扫描，确保路径最优",
+      "通过`IndexScan`显式控制"
+    ],
+    "hint_combination": "/*+ IndexScan(movie_link movie_id_movie_link) NoSeqScan(movie_link) */",
+    "expected_performance_benefit": "预计降低执行耗时8%-15%，核心收益来自确保大表访问路径最优"
+  }
+]
+```

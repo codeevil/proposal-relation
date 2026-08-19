@@ -1,0 +1,424 @@
+{
+  "sql_info": {
+    "original_sql": "",
+    "schema": "public",
+    "extracted_tables": [
+      {
+        "table_name": "aka_name",
+        "schema_name": "public",
+        "alias": "an"
+      },
+      {
+        "table_name": "cast_info",
+        "schema_name": "public",
+        "alias": "ci"
+      },
+      {
+        "table_name": "company_name",
+        "schema_name": "public",
+        "alias": "cn"
+      },
+      {
+        "table_name": "keyword",
+        "schema_name": "public",
+        "alias": "k"
+      },
+      {
+        "table_name": "movie_companies",
+        "schema_name": "public",
+        "alias": "mc"
+      },
+      {
+        "table_name": "movie_keyword",
+        "schema_name": "public",
+        "alias": "mk"
+      },
+      {
+        "table_name": "name",
+        "schema_name": "public",
+        "alias": "n"
+      },
+      {
+        "table_name": "title",
+        "schema_name": "public",
+        "alias": "t"
+      }
+    ]
+  },
+  "tables": {
+    "public.aka_name": {
+      "table_metadata": {
+        "relname": "aka_name",
+        "relnamespace": "public",
+        "reltuples": 901343,
+        "relpages": 11396,
+        "relallvisible": 11396
+      },
+      "indexes": [
+        {
+          "index_name": "aka_name_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        },
+        {
+          "index_name": "person_id_aka_name",
+          "index_type": "btree",
+          "index_columns": [
+            "person_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "name": {
+          "attname": "name",
+          "n_distinct": -0.5307913,
+          "null_frac": 0.0
+        },
+        "person_id": {
+          "attname": "person_id",
+          "n_distinct": -0.40876004,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.cast_info": {
+      "table_metadata": {
+        "relname": "cast_info",
+        "relnamespace": "public",
+        "reltuples": 36229832,
+        "relpages": 252683,
+        "relallvisible": 252683
+      },
+      "indexes": [
+        {
+          "index_name": "cast_info_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        },
+        {
+          "index_name": "movie_id_cast_info",
+          "index_type": "btree",
+          "index_columns": [
+            "movie_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "person_id_cast_info",
+          "index_type": "btree",
+          "index_columns": [
+            "person_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "person_role_id_cast_info",
+          "index_type": "btree",
+          "index_columns": [
+            "person_role_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "role_id_cast_info",
+          "index_type": "btree",
+          "index_columns": [
+            "role_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "movie_id": {
+          "attname": "movie_id",
+          "n_distinct": 948701.0,
+          "null_frac": 0.0
+        },
+        "person_id": {
+          "attname": "person_id",
+          "n_distinct": 70932.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.company_name": {
+      "table_metadata": {
+        "relname": "company_name",
+        "relnamespace": "public",
+        "reltuples": 234997,
+        "relpages": 2995,
+        "relallvisible": 2995
+      },
+      "indexes": [
+        {
+          "index_name": "company_name_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "country_code": {
+          "attname": "country_code",
+          "n_distinct": 166.0,
+          "null_frac": 0.101566665
+        },
+        "id": {
+          "attname": "id",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.keyword": {
+      "table_metadata": {
+        "relname": "keyword",
+        "relnamespace": "public",
+        "reltuples": 134170,
+        "relpages": 949,
+        "relallvisible": 949
+      },
+      "indexes": [
+        {
+          "index_name": "keyword_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "id": {
+          "attname": "id",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "keyword": {
+          "attname": "keyword",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.movie_companies": {
+      "table_metadata": {
+        "relname": "movie_companies",
+        "relnamespace": "public",
+        "reltuples": 2609129,
+        "relpages": 18790,
+        "relallvisible": 18790
+      },
+      "indexes": [
+        {
+          "index_name": "company_id_movie_companies",
+          "index_type": "btree",
+          "index_columns": [
+            "company_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "company_type_id_movie_companies",
+          "index_type": "btree",
+          "index_columns": [
+            "company_type_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "movie_companies_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        },
+        {
+          "index_name": "movie_id_movie_companies",
+          "index_type": "btree",
+          "index_columns": [
+            "movie_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "company_id": {
+          "attname": "company_id",
+          "n_distinct": 19586.0,
+          "null_frac": 0.0
+        },
+        "movie_id": {
+          "attname": "movie_id",
+          "n_distinct": -0.19393714,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.movie_keyword": {
+      "table_metadata": {
+        "relname": "movie_keyword",
+        "relnamespace": "public",
+        "reltuples": 4523930,
+        "relpages": 24454,
+        "relallvisible": 24454
+      },
+      "indexes": [
+        {
+          "index_name": "keyword_id_movie_keyword",
+          "index_type": "btree",
+          "index_columns": [
+            "keyword_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "movie_id_movie_keyword",
+          "index_type": "btree",
+          "index_columns": [
+            "movie_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "movie_keyword_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "keyword_id": {
+          "attname": "keyword_id",
+          "n_distinct": 14863.0,
+          "null_frac": 0.0
+        },
+        "movie_id": {
+          "attname": "movie_id",
+          "n_distinct": 97604.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.name": {
+      "table_metadata": {
+        "relname": "name",
+        "relnamespace": "public",
+        "reltuples": 4167505,
+        "relpages": 55613,
+        "relallvisible": 55613
+      },
+      "indexes": [
+        {
+          "index_name": "name_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "id": {
+          "attname": "id",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.title": {
+      "table_metadata": {
+        "relname": "title",
+        "relnamespace": "public",
+        "reltuples": 2528308,
+        "relpages": 35998,
+        "relallvisible": 35998
+      },
+      "indexes": [
+        {
+          "index_name": "kind_id_title",
+          "index_type": "btree",
+          "index_columns": [
+            "kind_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "title_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "episode_nr": {
+          "attname": "episode_nr",
+          "n_distinct": 1233.0,
+          "null_frac": 0.56493336
+        },
+        "id": {
+          "attname": "id",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "title": {
+          "attname": "title",
+          "n_distinct": 138799.0,
+          "null_frac": 0.0
+        }
+      }
+    }
+  }
+}

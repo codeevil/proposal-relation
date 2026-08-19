@@ -1,0 +1,41 @@
+Finalize Aggregate  (cost=38659.56..38659.57 rows=1 width=64) (actual time=198.737..229.272 rows=1 loops=1)
+  ->  Gather  (cost=38659.24..38659.55 rows=3 width=64) (actual time=198.625..229.266 rows=4 loops=1)
+        Workers Planned: 3
+        Workers Launched: 3
+        ->  Partial Aggregate  (cost=37659.24..37659.25 rows=1 width=64) (actual time=193.978..193.984 rows=1 loops=4)
+              ->  Hash Join  (cost=4735.62..37659.03 rows=41 width=33) (actual time=193.975..193.980 rows=0 loops=4)
+                    Hash Cond: (mc.company_type_id = ct.id)
+                    ->  Nested Loop  (cost=4734.53..37657.72 rows=41 width=37) (actual time=193.851..193.855 rows=0 loops=4)
+                          ->  Hash Join  (cost=4734.10..37608.71 rows=85 width=25) (actual time=193.851..193.854 rows=0 loops=4)
+                                Hash Cond: (ci.role_id = rt.id)
+                                ->  Nested Loop  (cost=4732.94..37603.89 rows=1026 width=29) (actual time=15.275..193.741 rows=654 loops=4)
+                                      Join Filter: (t.id = ci.movie_id)
+                                      ->  Nested Loop  (cost=4732.50..36448.04 rows=698 width=29) (actual time=14.336..135.509 rows=315 loops=4)
+                                            ->  Parallel Hash Join  (cost=4732.07..34148.00 rows=4459 width=8) (actual time=12.851..121.421 rows=2198 loops=4)
+                                                  Hash Cond: (mc.company_id = cn.id)
+                                                  ->  Parallel Seq Scan on movie_companies mc  (cost=0.00..27206.55 rows=841655 width=12) (actual time=0.024..44.911 rows=652282 loops=4)
+                                                  ->  Parallel Hash  (cost=4722.92..4722.92 rows=732 width=4) (actual time=12.530..12.531 rows=340 loops=4)
+                                                        Buckets: 2048  Batches: 1  Memory Usage: 144kB
+                                                        ->  Parallel Seq Scan on company_name cn  (cost=0.00..4722.92 rows=732 width=4) (actual time=0.043..12.396 rows=340 loops=4)
+                                                              Filter: ((country_code)::text = '[ru]'::text)
+                                                              Rows Removed by Filter: 58409
+                                            ->  Index Scan using title_pkey on title t  (cost=0.43..0.52 rows=1 width=21) (actual time=0.006..0.006 rows=0 loops=8790)
+                                                  Index Cond: (id = mc.movie_id)
+                                                  Filter: (production_year > 2010)
+                                                  Rows Removed by Filter: 1
+                                      ->  Index Scan using movie_id_cast_info on cast_info ci  (cost=0.44..1.64 rows=1 width=12) (actual time=0.100..0.184 rows=2 loops=1259)
+                                            Index Cond: (movie_id = mc.movie_id)
+                                            Filter: ((note)::text ~~ '%(producer)%'::text)
+                                            Rows Removed by Filter: 44
+                                ->  Hash  (cost=1.15..1.15 rows=1 width=4) (actual time=0.028..0.028 rows=1 loops=4)
+                                      Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                      ->  Seq Scan on role_type rt  (cost=0.00..1.15 rows=1 width=4) (actual time=0.024..0.026 rows=1 loops=4)
+                                            Filter: ((role)::text = 'actor'::text)
+                                            Rows Removed by Filter: 11
+                          ->  Index Scan using char_name_pkey on char_name chn  (cost=0.43..0.58 rows=1 width=20) (never executed)
+                                Index Cond: (id = ci.person_role_id)
+                    ->  Hash  (cost=1.04..1.04 rows=4 width=4) (actual time=0.020..0.021 rows=4 loops=4)
+                          Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                          ->  Seq Scan on company_type ct  (cost=0.00..1.04 rows=4 width=4) (actual time=0.012..0.013 rows=4 loops=4)
+Planning Time: 5.793 ms
+Execution Time: 229.442 ms

@@ -1,0 +1,41 @@
+Aggregate  (cost=19208.29..19208.30 rows=1 width=64) (actual time=76.131..81.717 rows=1 loops=1)
+  ->  Gather  (cost=1004.41..19208.29 rows=1 width=60) (actual time=76.086..81.703 rows=10 loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        ->  Nested Loop  (cost=4.41..18208.19 rows=1 width=60) (actual time=69.258..70.099 rows=3 loops=3)
+              ->  Nested Loop  (cost=4.27..18205.73 rows=15 width=64) (actual time=69.172..69.710 rows=403 loops=3)
+                    Join Filter: (t.id = mi.movie_id)
+                    ->  Nested Loop  (cost=3.84..18203.79 rows=1 width=29) (actual time=69.140..69.358 rows=3 loops=3)
+                          ->  Nested Loop  (cost=3.42..18203.34 rows=1 width=33) (actual time=69.116..69.150 rows=11 loops=3)
+                                ->  Nested Loop  (cost=3.29..18203.02 rows=2 width=37) (actual time=69.109..69.131 rows=11 loops=3)
+                                      Join Filter: (t.id = mc.movie_id)
+                                      ->  Nested Loop  (cost=2.86..18202.37 rows=1 width=25) (actual time=69.095..69.108 rows=1 loops=3)
+                                            ->  Hash Join  (cost=2.43..15253.60 rows=5089 width=4) (actual time=69.029..69.032 rows=3 loops=3)
+                                                  Hash Cond: (mi_idx.info_type_id = it2.id)
+                                                  ->  Parallel Seq Scan on movie_info_idx mi_idx  (cost=0.00..13685.15 rows=575015 width=8) (actual time=0.013..34.099 rows=460012 loops=3)
+                                                  ->  Hash  (cost=2.41..2.41 rows=1 width=4) (actual time=0.034..0.035 rows=1 loops=3)
+                                                        Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                                        ->  Seq Scan on info_type it2  (cost=0.00..2.41 rows=1 width=4) (actual time=0.028..0.028 rows=1 loops=3)
+                                                              Filter: ((info)::text = 'bottom 10 rank'::text)
+                                                              Rows Removed by Filter: 112
+                                            ->  Index Scan using title_pkey on title t  (cost=0.43..0.58 rows=1 width=21) (actual time=0.022..0.022 rows=0 loops=10)
+                                                  Index Cond: (id = mi_idx.movie_id)
+                                                  Filter: ((production_year > 2000) AND (((title)::text ~~ 'Birdemic%'::text) OR ((title)::text ~~ '%Movie%'::text)))
+                                                  Rows Removed by Filter: 1
+                                      ->  Index Scan using movie_id_movie_companies on movie_companies mc  (cost=0.43..0.59 rows=5 width=12) (actual time=0.023..0.030 rows=16 loops=2)
+                                            Index Cond: (movie_id = mi_idx.movie_id)
+                                ->  Index Scan using company_type_pkey on company_type ct  (cost=0.13..0.15 rows=1 width=4) (actual time=0.001..0.001 rows=1 loops=33)
+                                      Index Cond: (id = mc.company_type_id)
+                                      Filter: ((kind IS NOT NULL) AND (((kind)::text = 'production companies'::text) OR ((kind)::text = 'distributors'::text)))
+                          ->  Index Scan using company_name_pkey on company_name cn  (cost=0.42..0.45 rows=1 width=4) (actual time=0.019..0.019 rows=0 loops=33)
+                                Index Cond: (id = mc.company_id)
+                                Filter: ((country_code)::text = '[us]'::text)
+                                Rows Removed by Filter: 1
+                    ->  Index Scan using movie_id_movie_info on movie_info mi  (cost=0.43..1.43 rows=41 width=51) (actual time=0.016..0.089 rows=121 loops=10)
+                          Index Cond: (movie_id = mc.movie_id)
+              ->  Index Scan using info_type_pkey on info_type it1  (cost=0.14..0.16 rows=1 width=4) (actual time=0.001..0.001 rows=0 loops=1210)
+                    Index Cond: (id = mi.info_type_id)
+                    Filter: ((info)::text = 'budget'::text)
+                    Rows Removed by Filter: 1
+Planning Time: 9.479 ms
+Execution Time: 81.870 ms

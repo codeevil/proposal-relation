@@ -1,0 +1,457 @@
+{
+  "sql_info": {
+    "original_sql": "",
+    "schema": "public",
+    "extracted_tables": [
+      {
+        "table_name": "aka_title",
+        "schema_name": "public",
+        "alias": "at_"
+      },
+      {
+        "table_name": "company_name",
+        "schema_name": "public",
+        "alias": "cn"
+      },
+      {
+        "table_name": "company_type",
+        "schema_name": "public",
+        "alias": "ct"
+      },
+      {
+        "table_name": "info_type",
+        "schema_name": "public",
+        "alias": "it1"
+      },
+      {
+        "table_name": "keyword",
+        "schema_name": "public",
+        "alias": "k"
+      },
+      {
+        "table_name": "movie_companies",
+        "schema_name": "public",
+        "alias": "mc"
+      },
+      {
+        "table_name": "movie_info",
+        "schema_name": "public",
+        "alias": "mi"
+      },
+      {
+        "table_name": "movie_keyword",
+        "schema_name": "public",
+        "alias": "mk"
+      },
+      {
+        "table_name": "title",
+        "schema_name": "public",
+        "alias": "t"
+      }
+    ]
+  },
+  "tables": {
+    "public.aka_title": {
+      "table_metadata": {
+        "relname": "aka_title",
+        "relnamespace": "public",
+        "reltuples": 361472,
+        "relpages": 6192,
+        "relallvisible": 6192
+      },
+      "indexes": [
+        {
+          "index_name": "aka_title_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        },
+        {
+          "index_name": "kind_id_aka_title",
+          "index_type": "btree",
+          "index_columns": [
+            "kind_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "movie_id_aka_title",
+          "index_type": "btree",
+          "index_columns": [
+            "movie_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "movie_id": {
+          "attname": "movie_id",
+          "n_distinct": -0.3878281,
+          "null_frac": 0.0
+        },
+        "title": {
+          "attname": "title",
+          "n_distinct": -0.70556223,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.company_name": {
+      "table_metadata": {
+        "relname": "company_name",
+        "relnamespace": "public",
+        "reltuples": 234997,
+        "relpages": 2995,
+        "relallvisible": 2995
+      },
+      "indexes": [
+        {
+          "index_name": "company_name_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "country_code": {
+          "attname": "country_code",
+          "n_distinct": 166.0,
+          "null_frac": 0.101566665
+        },
+        "id": {
+          "attname": "id",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.company_type": {
+      "table_metadata": {
+        "relname": "company_type",
+        "relnamespace": "public",
+        "reltuples": 4,
+        "relpages": 1,
+        "relallvisible": 1
+      },
+      "indexes": [
+        {
+          "index_name": "company_type_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "id": {
+          "attname": "id",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.info_type": {
+      "table_metadata": {
+        "relname": "info_type",
+        "relnamespace": "public",
+        "reltuples": 113,
+        "relpages": 1,
+        "relallvisible": 1
+      },
+      "indexes": [
+        {
+          "index_name": "info_type_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "id": {
+          "attname": "id",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "info": {
+          "attname": "info",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.keyword": {
+      "table_metadata": {
+        "relname": "keyword",
+        "relnamespace": "public",
+        "reltuples": 134170,
+        "relpages": 949,
+        "relallvisible": 949
+      },
+      "indexes": [
+        {
+          "index_name": "keyword_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "id": {
+          "attname": "id",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.movie_companies": {
+      "table_metadata": {
+        "relname": "movie_companies",
+        "relnamespace": "public",
+        "reltuples": 2609129,
+        "relpages": 18790,
+        "relallvisible": 18790
+      },
+      "indexes": [
+        {
+          "index_name": "company_id_movie_companies",
+          "index_type": "btree",
+          "index_columns": [
+            "company_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "company_type_id_movie_companies",
+          "index_type": "btree",
+          "index_columns": [
+            "company_type_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "movie_companies_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        },
+        {
+          "index_name": "movie_id_movie_companies",
+          "index_type": "btree",
+          "index_columns": [
+            "movie_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "company_id": {
+          "attname": "company_id",
+          "n_distinct": 19586.0,
+          "null_frac": 0.0
+        },
+        "company_type_id": {
+          "attname": "company_type_id",
+          "n_distinct": 2.0,
+          "null_frac": 0.0
+        },
+        "movie_id": {
+          "attname": "movie_id",
+          "n_distinct": -0.19393714,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.movie_info": {
+      "table_metadata": {
+        "relname": "movie_info",
+        "relnamespace": "public",
+        "reltuples": 14948584,
+        "relpages": 161993,
+        "relallvisible": 161993
+      },
+      "indexes": [
+        {
+          "index_name": "info_type_id_movie_info",
+          "index_type": "btree",
+          "index_columns": [
+            "info_type_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "movie_id_movie_info",
+          "index_type": "btree",
+          "index_columns": [
+            "movie_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "movie_info_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "info_type_id": {
+          "attname": "info_type_id",
+          "n_distinct": 70.0,
+          "null_frac": 0.0
+        },
+        "movie_id": {
+          "attname": "movie_id",
+          "n_distinct": 361291.0,
+          "null_frac": 0.0
+        },
+        "note": {
+          "attname": "note",
+          "n_distinct": 1988.0,
+          "null_frac": 0.9034333
+        }
+      }
+    },
+    "public.movie_keyword": {
+      "table_metadata": {
+        "relname": "movie_keyword",
+        "relnamespace": "public",
+        "reltuples": 4523930,
+        "relpages": 24454,
+        "relallvisible": 24454
+      },
+      "indexes": [
+        {
+          "index_name": "keyword_id_movie_keyword",
+          "index_type": "btree",
+          "index_columns": [
+            "keyword_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "movie_id_movie_keyword",
+          "index_type": "btree",
+          "index_columns": [
+            "movie_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "movie_keyword_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "keyword_id": {
+          "attname": "keyword_id",
+          "n_distinct": 14863.0,
+          "null_frac": 0.0
+        },
+        "movie_id": {
+          "attname": "movie_id",
+          "n_distinct": 97604.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.title": {
+      "table_metadata": {
+        "relname": "title",
+        "relnamespace": "public",
+        "reltuples": 2528308,
+        "relpages": 35998,
+        "relallvisible": 35998
+      },
+      "indexes": [
+        {
+          "index_name": "kind_id_title",
+          "index_type": "btree",
+          "index_columns": [
+            "kind_id"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "title_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "id"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "id": {
+          "attname": "id",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "production_year": {
+          "attname": "production_year",
+          "n_distinct": 123.0,
+          "null_frac": 0.0277
+        },
+        "title": {
+          "attname": "title",
+          "n_distinct": 138799.0,
+          "null_frac": 0.0
+        }
+      }
+    }
+  }
+}

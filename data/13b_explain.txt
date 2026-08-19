@@ -1,0 +1,59 @@
+Aggregate  (cost=19206.23..19206.24 rows=1 width=96) (actual time=525.698..542.722 rows=1 loops=1)
+  ->  Gather  (cost=1004.57..19206.22 rows=1 width=42) (actual time=262.665..542.567 rows=372 loops=1)
+        Workers Planned: 2
+        Workers Launched: 2
+        ->  Nested Loop  (cost=4.57..18206.12 rows=1 width=42) (actual time=237.776..520.936 rows=124 loops=3)
+              ->  Nested Loop  (cost=4.42..18205.78 rows=2 width=46) (actual time=237.726..520.192 rows=707 loops=3)
+                    Join Filter: (t.id = mi.movie_id)
+                    ->  Nested Loop  (cost=3.99..18203.84 rows=1 width=54) (actual time=237.656..518.554 rows=20 loops=3)
+                          ->  Nested Loop  (cost=3.57..18203.39 rows=1 width=39) (actual time=231.546..517.921 rows=39 loops=3)
+                                ->  Nested Loop  (cost=3.43..18203.22 rows=1 width=43) (actual time=231.514..517.848 rows=104 loops=3)
+                                      Join Filter: (t.id = mc.movie_id)
+                                      ->  Nested Loop  (cost=3.00..18202.57 rows=1 width=31) (actual time=231.466..517.224 rows=30 loops=3)
+                                            ->  Nested Loop  (cost=2.86..18202.37 rows=1 width=35) (actual time=1.895..517.036 rows=117 loops=3)
+                                                  ->  Hash Join  (cost=2.43..15253.60 rows=5089 width=10) (actual time=0.118..100.523 rows=153308 loops=3)
+                                                        Hash Cond: (miidx.info_type_id = it.id)
+                                                        ->  Parallel Seq Scan on movie_info_idx miidx  (cost=0.00..13685.15 rows=575015 width=14) (actual time=0.014..31.312 rows=460012 loops=3)
+                                                        ->  Hash  (cost=2.41..2.41 rows=1 width=4) (actual time=0.034..0.035 rows=1 loops=3)
+                                                              Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                                              ->  Seq Scan on info_type it  (cost=0.00..2.41 rows=1 width=4) (actual time=0.026..0.027 rows=1 loops=3)
+                                                                    Filter: ((info)::text = 'rating'::text)
+                                                                    Rows Removed by Filter: 112
+                                                  ->  Index Scan using title_pkey on title t  (cost=0.43..0.58 rows=1 width=25) (actual time=0.003..0.003 rows=0 loops=459925)
+                                                        Index Cond: (id = miidx.movie_id)
+                                                        Filter: (((title)::text <> ''::text) AND (((title)::text ~~ '%Champion%'::text) OR ((title)::text ~~ '%Loser%'::text)))
+                                                        Rows Removed by Filter: 1
+                                            ->  Memoize  (cost=0.14..0.19 rows=1 width=4) (actual time=0.001..0.001 rows=0 loops=352)
+                                                  Cache Key: t.kind_id
+                                                  Cache Mode: logical
+                                                  Hits: 82  Misses: 6  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+                                                  Worker 0:  Hits: 110  Misses: 6  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+                                                  Worker 1:  Hits: 142  Misses: 6  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+                                                  ->  Index Scan using kind_type_pkey on kind_type kt  (cost=0.13..0.18 rows=1 width=4) (actual time=0.012..0.012 rows=0 loops=18)
+                                                        Index Cond: (id = t.kind_id)
+                                                        Filter: ((kind)::text = 'movie'::text)
+                                                        Rows Removed by Filter: 1
+                                      ->  Index Scan using movie_id_movie_companies on movie_companies mc  (cost=0.43..0.59 rows=5 width=12) (actual time=0.015..0.019 rows=3 loops=90)
+                                            Index Cond: (movie_id = miidx.movie_id)
+                                ->  Memoize  (cost=0.14..0.16 rows=1 width=4) (actual time=0.000..0.000 rows=0 loops=313)
+                                      Cache Key: mc.company_type_id
+                                      Cache Mode: logical
+                                      Hits: 45  Misses: 2  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+                                      Worker 0:  Hits: 119  Misses: 2  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+                                      Worker 1:  Hits: 143  Misses: 2  Evictions: 0  Overflows: 0  Memory Usage: 1kB
+                                      ->  Index Scan using company_type_pkey on company_type ct  (cost=0.13..0.15 rows=1 width=4) (actual time=0.006..0.007 rows=0 loops=6)
+                                            Index Cond: (id = mc.company_type_id)
+                                            Filter: ((kind)::text = 'production companies'::text)
+                                            Rows Removed by Filter: 0
+                          ->  Index Scan using company_name_pkey on company_name cn  (cost=0.42..0.45 rows=1 width=23) (actual time=0.016..0.016 rows=1 loops=117)
+                                Index Cond: (id = mc.company_id)
+                                Filter: ((country_code)::text = '[us]'::text)
+                                Rows Removed by Filter: 0
+                    ->  Index Scan using movie_id_movie_info on movie_info mi  (cost=0.43..1.43 rows=41 width=8) (actual time=0.019..0.075 rows=35 loops=61)
+                          Index Cond: (movie_id = mc.movie_id)
+              ->  Index Scan using info_type_pkey on info_type it2  (cost=0.14..0.16 rows=1 width=4) (actual time=0.001..0.001 rows=0 loops=2122)
+                    Index Cond: (id = mi.info_type_id)
+                    Filter: ((info)::text = 'release dates'::text)
+                    Rows Removed by Filter: 1
+Planning Time: 14.611 ms
+Execution Time: 542.936 ms

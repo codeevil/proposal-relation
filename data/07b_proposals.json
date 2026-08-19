@@ -1,0 +1,264 @@
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "校正严重行数估计偏差，重构连接顺序并强制哈希连接，消除嵌套循环的指数级性能瓶颈",
+    "core_optimization_points": [
+      "识别并校正`movie_link`与`link_type`连接后结果集的严重低估（估计1875行，实际5186行），使用乘法系数修正",
+      "将`link_type`与`movie_link`作为最小驱动组，优先执行以控制中间结果集规模",
+      "强制`movie_link`与`title`之间使用哈希连接，替代原嵌套循环连接，避免对`title`表的5186次重复扫描",
+      "调整连接顺序为`link_type → movie_link → title → cast_info → name → person_info → aka_name`，使小结果集逐步膨胀",
+      "对`cast_info`表启用并行扫描，加速大表连接"
+    ],
+    "hint_combination": "/*+ Rows(movie_link *2.77) Leading( (link_type (movie_link (title (cast_info (name (person_info aka_name))))) ) ) HashJoin(movie_link title) HashJoin(cast_info name) HashJoin(person_info aka_name) Parallel(cast_info 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自消除`title`表被扫描5186次的嵌套循环开销，以及`cast_info`大表并行加速，同时修正估计偏差使优化器选择更合理路径"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "强制使用覆盖索引实现仅索引扫描，消除`name`与`person_info`表的回表开销，提升连接效率",
+    "core_optimization_points": [
+      "发现`name`表在`gender='m'`与`name_pcode_cf LIKE 'D%'`条件下结果集极小，但原计划使用`IndexScan`后回表",
+      "强制`name`表使用`name_pkey`进行`IndexOnlyScan`，避免回表读取",
+      "对`person_info`表启用`IndexOnlyScan`，其`note='Volker Boehm'`过滤选择性极高（仅0.026%）",
+      "调整`work_mem`为128MB，防止`BitmapAnd`操作溢出磁盘",
+      "将`person_info`与`aka_name`连接改为`HashJoin`，避免因`person_id`重复导致嵌套循环膨胀"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(name name_pkey) IndexOnlyScan(person_info person_id_person_info) HashJoin(person_info aka_name) Set(work_mem '128MB') Parallel(person_info 2) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-60%。核心收益来自消除`name`与`person_info`的回表IO，减少随机读开销，同时`IndexOnlyScan`在高选择性条件下效率极高"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "基于统计信息重建连接顺序，将最小结果集作为驱动表，避免中间结果集早期膨胀",
+    "core_optimization_points": [
+      "计算各过滤条件后结果集规模：`link_type`仅1行，`movie_link`在`link_type_id`过滤后约5186行，`title`在`production_year`过滤后约435行，`cast_info`在`movie_id`过滤后约77行，`name`在`gender`与`name_pcode_cf`过滤后约1076行",
+      "将`link_type`作为最外层驱动表，后续连接逐步扩展结果集",
+      "强制`title`与`cast_info`使用`MergeJoin`，因`movie_id`在`cast_info`上有索引且有序",
+      "对`name`表使用`NoSeqScan`，强制使用索引扫描以加速过滤",
+      "对`aka_name`表启用`BitmapScan`，因`name LIKE '%a%'`选择性中等"
+    ],
+    "hint_combination": "/*+ Leading( (link_type (movie_link (title (cast_info (name (person_info aka_name))))) ) ) MergeJoin(title cast_info) NoSeqScan(name) BitmapScan(aka_name) */",
+    "expected_performance_benefit": "预计降低执行耗时50%-70%。核心收益来自避免早期连接产生大中间结果，使连接顺序与数据分布高度匹配，减少无效扫描"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "强制使用哈希连接替代嵌套循环，解决`cast_info`与`name`之间因驱动表过大导致的性能退化",
+    "core_optimization_points": [
+      "发现`cast_info`表连接`name`时，`name`表被扫描33415次，实际仅返回0行，说明`name`过滤后结果集极小但优化器误判",
+      "强制`cast_info`与`name`使用`HashJoin`，避免对`name`的重复扫描",
+      "对`name`表使用`IndexOnlyScan`，因`id`为主键且`gender`与`name_pcode_cf`选择性高",
+      "校正`cast_info`与`title`连接后行数估计，使用乘法系数修正",
+      "启用`Memoize`缓存，避免对`person_info`的重复查询"
+    ],
+    "hint_combination": "/*+ HashJoin(cast_info name) IndexOnlyScan(name name_pkey) Rows(cast_info *0.1) Memoize(cast_info person_info) */",
+    "expected_performance_benefit": "预计降低执行耗时55%-75%。核心收益来自消除对`name`表的3万次重复扫描，将嵌套循环转为一次哈希构建+探测，大幅降低CPU与IO开销"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "利用`info_type`与`link_type`的小表特性，强制其作为驱动表并启用并行扫描，提升整体效率",
+    "core_optimization_points": [
+      "`info_type`与`link_type`表均极小（113行与18行），但原计划作为最后连接，导致其结果集被多次复用",
+      "强制`link_type`与`movie_link`使用`HashJoin`，并启用并行扫描加速大表连接",
+      "对`info_type`表启用`NoSeqScan`，强制使用主键索引扫描",
+      "将`info_type`与`person_info`连接改为`HashJoin`，避免因`info_type_id`重复导致嵌套循环膨胀",
+      "提升`movie_link`表并行度至4，加速其连接过程"
+    ],
+    "hint_combination": "/*+ Leading( (link_type (movie_link (title (cast_info (name (person_info info_type))))) ) ) HashJoin(link_type movie_link) Parallel(movie_link 4) NoSeqScan(info_type) HashJoin(person_info info_type) */",
+    "expected_performance_benefit": "预计降低执行耗时45%-65%。核心收益来自小表驱动+大表并行，使连接树从‘大表驱动’转为‘小表驱动’，显著降低整体代价"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "强制使用位图扫描结合位图索引，优化`aka_name`表的模糊匹配性能",
+    "core_optimization_points": [
+      "`aka_name.name LIKE '%a%'`为后缀模糊匹配，无法使用B树索引，但`n_distinct=-0.53`表明选择性中等",
+      "强制`aka_name`表使用`BitmapScan`，结合`person_id_aka_name`索引，减少随机IO",
+      "对`aka_name`表启用`Parallel(aka_name 2)`，加速大表扫描",
+      "校正`aka_name`与`cast_info`连接后行数估计，使用乘法系数修正",
+      "将`aka_name`连接位置前移，尽早过滤"
+    ],
+    "hint_combination": "/*+ BitmapScan(aka_name person_id_aka_name) Parallel(aka_name 2) Rows(aka_name *1.5) Leading( (link_type (movie_link (title (cast_info (name (person_info (aka_name info_type))))))) ) */",
+    "expected_performance_benefit": "预计降低执行耗时35%-50%。核心收益来自位图扫描减少随机IO，避免全表扫描，同时并行加速模糊匹配"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "通过`Rows` Hint修正优化器对`cast_info`与`title`连接后行数的严重低估，引导使用哈希连接",
+    "core_optimization_points": [
+      "`cast_info`与`title`连接后，优化器估计行数为1，实际为77行，严重低估",
+      "使用`Rows(cast_info *0.2)`校正`cast_info`表的行数估计，间接影响连接路径",
+      "强制`cast_info`与`title`使用`HashJoin`，避免嵌套循环对`title`的重复扫描",
+      "对`title`表启用`IndexOnlyScan`，因`production_year`范围查询选择性高",
+      "提升`cast_info`表并行度至4"
+    ],
+    "hint_combination": "/*+ Rows(cast_info *0.2) HashJoin(cast_info title) IndexOnlyScan(title title_pkey) Parallel(cast_info 4) */",
+    "expected_performance_benefit": "预计降低执行耗时50%-70%。核心收益来自修正估计偏差后，优化器选择哈希连接，避免对`title`表的77次重复扫描"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "强制使用合并连接复用索引排序，避免对`cast_info`与`title`的额外排序开销",
+    "core_optimization_points": [
+      "`cast_info.movie_id`与`title.id`均为B树索引，且`movie_id`有序",
+      "强制`cast_info`与`title`使用`MergeJoin`，复用索引天然有序性",
+      "对`cast_info`表启用`NoNestLoop`，防止优化器错误选择嵌套循环",
+      "对`title`表启用`IndexOnlyScan`，避免回表",
+      "提升`cast_info`表并行度至4"
+    ],
+    "hint_combination": "/*+ MergeJoin(cast_info title) NoNestLoop(cast_info title) IndexOnlyScan(title title_pkey) Parallel(cast_info 4) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-60%。核心收益来自复用索引排序，避免额外排序开销，尤其在大表连接中优势显著"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "启用`Memoize`缓存机制，避免对`person_info`表的重复查询，提升嵌套循环效率",
+    "core_optimization_points": [
+      "`person_info`表在`person_id`上被多次查询，且`note='Volker Boehm'`选择性极高",
+      "强制`cast_info`与`person_info`使用`Memoize`，复用相同`person_id`的查询结果",
+      "对`person_info`表启用`IndexOnlyScan`，避免回表",
+      "校正`person_info`与`aka_name`连接后行数估计",
+      "将`person_info`连接提前，尽早过滤"
+    ],
+    "hint_combination": "/*+ Memoize(cast_info person_info) IndexOnlyScan(person_info person_id_person_info) Rows(person_info *0.1) Leading( (link_type (movie_link (title (cast_info (person_info (aka_name info_type)))))) ) */",
+    "expected_performance_benefit": "预计降低执行耗时30%-50%。核心收益来自`Memoize`避免对`person_info`的重复查询，尤其在`cast_info`行数多时收益显著"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "强制使用`Parallel`并行扫描`cast_info`表，利用多核资源加速大表连接",
+    "core_optimization_points": [
+      "`cast_info`表有3622万行，是全查询中最大表，但未启用并行扫描",
+      "强制`cast_info`表使用4个并行Worker，加速其扫描与连接",
+      "对`cast_info`表启用`IndexScan`，避免全表扫描",
+      "校正`cast_info`与`title`连接后行数估计",
+      "提升`title`表并行度至2"
+    ],
+    "hint_combination": "/*+ Parallel(cast_info 4) Parallel(title 2) Rows(cast_info *0.1) IndexScan(cast_info movie_id_cast_info) */",
+    "expected_performance_benefit": "预计降低执行耗时35%-55%。核心收益来自大表并行扫描，充分利用多核CPU，显著缩短IO与CPU时间"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "调整`Set`参数，优化代价模型，引导优化器选择更合理的连接方法",
+    "core_optimization_points": [
+      "当前`random_page_cost=4.0`，但SSD环境应为1.1~2.0，导致优化器高估随机IO代价",
+      "将`random_page_cost`调至1.5，使哈希连接代价降低，更易被选中",
+      "将`cpu_tuple_cost`调至0.008，反映真实CPU性能",
+      "将`work_mem`调至64MB，防止大哈希或排序溢出磁盘",
+      "禁用`enable_seqscan`，强制使用索引扫描"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.5) Set(cpu_tuple_cost 0.008) Set(work_mem '64MB') Set(enable_seqscan off) */",
+    "expected_performance_benefit": "预计降低执行耗时25%-40%。核心收益来自代价模型更真实，使优化器更倾向选择哈希连接与索引扫描"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "将`info_type`与`person_info`连接提前，利用其小表特性作为驱动表，控制中间结果集",
+    "core_optimization_points": [
+      "`info_type`表仅113行，`person_info`表在`info_type_id`过滤后结果集小",
+      "强制`info_type`与`person_info`使用`HashJoin`，作为连接起点",
+      "将`info_type`连接位置前移，尽早过滤`person_info`",
+      "对`person_info`表启用`IndexOnlyScan`",
+      "提升`person_info`表并行度至2"
+    ],
+    "hint_combination": "/*+ Leading( (info_type (person_info (aka_name (name (cast_info (title (movie_link link_type))))))) ) HashJoin(info_type person_info) IndexOnlyScan(person_info person_id_person_info) Parallel(person_info 2) */",
+    "expected_performance_benefit": "预计降低执行耗时30%-50%。核心收益来自小表驱动，使连接树更合理，减少无效连接"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "强制`title`表使用仅索引扫描，避免回表开销，提升连接效率",
+    "core_optimization_points": [
+      "`title`表在`production_year`范围查询后仅返回0行，但原计划使用`IndexScan`后回表",
+      "强制`title`表使用`IndexOnlyScan`，因`id`为主键且`production_year`在索引中",
+      "对`title`表启用`NoSeqScan`，强制使用索引",
+      "校正`title`与`cast_info`连接后行数估计",
+      "提升`title`表并行度至2"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(title title_pkey) NoSeqScan(title) Rows(title *0.05) Parallel(title 2) */",
+    "expected_performance_benefit": "预计降低执行耗时35%-50%。核心收益来自避免`title`表回表IO，尤其在大表连接中优势明显"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "强制`movie_link`表使用位图扫描，优化`link_type_id`与`linked_movie_id`组合过滤",
+    "core_optimization_points": [
+      "`movie_link`表在`link_type_id`与`linked_movie_id`上有索引，但原计划使用`BitmapHeapScan`",
+      "强制`movie_link`表使用`BitmapScan`，结合`link_type_id_movie_link`与`linked_movie_id_movie_link`索引",
+      "对`movie_link`表启用`Parallel`，加速大表扫描",
+      "校正`movie_link`与`link_type`连接后行数估计",
+      "将`movie_link`连接位置前移"
+    ],
+    "hint_combination": "/*+ BitmapScan(movie_link link_type_id_movie_link) BitmapScan(movie_link linked_movie_id_movie_link) Parallel(movie_link 4) Rows(movie_link *2.5) Leading( (link_type (movie_link (title (cast_info (name (person_info aka_name))))) ) ) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-60%。核心收益来自位图扫描减少随机IO，避免全表扫描"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "禁用嵌套循环，强制使用哈希连接，解决`cast_info`与`name`之间的性能瓶颈",
+    "core_optimization_points": [
+      "`cast_info`与`name`连接时，嵌套循环导致`name`被扫描33415次，性能极差",
+      "强制`cast_info`与`name`使用`HashJoin`，避免重复扫描",
+      "对`name`表启用`IndexOnlyScan`",
+      "校正`cast_info`与`name`连接后行数估计",
+      "提升`cast_info`表并行度至4"
+    ],
+    "hint_combination": "/*+ NoNestLoop(cast_info name) HashJoin(cast_info name) IndexOnlyScan(name name_pkey) Parallel(cast_info 4) Rows(cast_info *0.1) */",
+    "expected_performance_benefit": "预计降低执行耗时55%-75%。核心收益来自消除对`name`表的重复扫描，将嵌套循环转为一次哈希构建"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "将`aka_name`与`person_info`连接提前，利用其高选择性过滤尽早减少数据量",
+    "core_optimization_points": [
+      "`aka_name.name LIKE '%a%'`与`person_info.note='Volker Boehm'`均具有高选择性",
+      "强制`aka_name`与`person_info`使用`HashJoin`，作为连接起点",
+      "对`aka_name`表启用`BitmapScan`",
+      "对`person_info`表启用`IndexOnlyScan`",
+      "提升`aka_name`表并行度至2"
+    ],
+    "hint_combination": "/*+ Leading( (aka_name (person_info (name (cast_info (title (movie_link link_type)))))) ) HashJoin(aka_name person_info) BitmapScan(aka_name person_id_aka_name) IndexOnlyScan(person_info person_id_person_info) Parallel(aka_name 2) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-60%。核心收益来自尽早过滤，减少后续连接的数据量"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "强制`name`表使用`IndexOnlyScan`，避免回表开销，提升连接效率",
+    "core_optimization_points": [
+      "`name`表在`gender='m'`与`name_pcode_cf LIKE 'D%'`下结果集小，但原计划使用`IndexScan`后回表",
+      "强制`name`表使用`IndexOnlyScan`，因`id`为主键且`gender`与`name_pcode_cf`在索引中",
+      "对`name`表启用`NoSeqScan`，强制使用索引",
+      "校正`name`与`cast_info`连接后行数估计",
+      "提升`name`表并行度至2"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(name name_pkey) NoSeqScan(name) Rows(name *0.1) Parallel(name 2) */",
+    "expected_performance_benefit": "预计降低执行耗时35%-50%。核心收益来自避免`name`表回表IO，尤其在大表连接中优势明显"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "强制`link_type`表使用主键索引扫描，避免全表扫描",
+    "core_optimization_points": [
+      "`link_type`表仅18行，但原计划使用`SeqScan`",
+      "强制`link_type`表使用`IndexScan`，因`id`为主键",
+      "对`link_type`表启用`NoSeqScan`",
+      "提升`link_type`表并行度至1",
+      "将`link_type`连接位置前移"
+    ],
+    "hint_combination": "/*+ IndexScan(link_type link_type_pkey) NoSeqScan(link_type) Parallel(link_type 1) Leading( (link_type (movie_link (title (cast_info (name (person_info aka_name))))) ) ) */",
+    "expected_performance_benefit": "预计降低执行耗时20%-35%。核心收益来自小表索引扫描，避免不必要的全表扫描"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "强制`title`表使用`IndexOnlyScan`，避免回表开销，提升连接效率",
+    "core_optimization_points": [
+      "`title`表在`production_year`范围查询后结果集小，但原计划使用`IndexScan`后回表",
+      "强制`title`表使用`IndexOnlyScan`，因`id`为主键且`production_year`在索引中",
+      "对`title`表启用`NoSeqScan`",
+      "校正`title`与`cast_info`连接后行数估计",
+      "提升`title`表并行度至2"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(title title_pkey) NoSeqScan(title) Rows(title *0.05) Parallel(title 2) */",
+    "expected_performance_benefit": "预计降低执行耗时35%-50%。核心收益来自避免`title`表回表IO"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "强制`cast_info`表使用并行扫描，加速大表连接",
+    "core_optimization_points": [
+      "`cast_info`表有3622万行，是全查询中最大表，但未启用并行扫描",
+      "强制`cast_info`表使用4个并行Worker，加速其扫描与连接",
+      "对`cast_info`表启用`IndexScan`，避免全表扫描",
+      "校正`cast_info`与`title`连接后行数估计",
+      "提升`cast_info`表并行度至4"
+    ],
+    "hint_combination": "/*+ Parallel(cast_info 4) IndexScan(cast_info movie_id_cast_info) Rows(cast_info *0.1) */",
+    "expected_performance_benefit": "预计降低执行耗时30%-50%。核心收益来自大表并行扫描，充分利用多核CPU"
+  }
+]
+```

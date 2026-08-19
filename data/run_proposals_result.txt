@@ -1,0 +1,27 @@
+
+=== 16b.sql ===
+Proposal ID  Label          Elapsed (ms)  Speedup  Speedup-Lero  Status      Error                                                       
+-----------  -------------  ------------  -------  ------------  ----------  ------------------------------------------------------------
+0            baseline       14292.86      1.00x    N/A           ok                                                                      
+1            lero-baseline  error         N/A      N/A           error       Unable to connect to Lero server.                           
+1            proposal_1     13738.11      1.04x    N/A           hint_error  Rows(movie_keyword *664.1) | Rows hint requires at least ...
+2            proposal_2     13688.46      1.04x    N/A           ok                                                                      
+3            proposal_3     13982.23      1.02x    N/A           ok                                                                      
+4            proposal_4     14046.45      1.02x    N/A           hint_error  Conflict join method hint. Conflict join method hint. | p...
+5            proposal_5     13666.24      1.05x    N/A           ok                                                                      
+6            proposal_6     13566.84      1.05x    N/A           hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+7            proposal_7     13804.22      1.04x    N/A           ok                                                                      
+8            proposal_8     13500.62      1.06x    N/A           ok                                                                      
+9            proposal_9     13995.76      1.02x    N/A           hint_error  Conflict join method hint. Conflict join method hint. Con...
+10           proposal_10    14332.47      1.00x    N/A           ok                                                                      
+11           proposal_11    13558.56      1.05x    N/A           ok                                                                      
+12           proposal_12    13453.02      1.06x    N/A           ok                                                                      
+13           proposal_13    14405.80      0.99x    N/A           hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+14           proposal_14    14367.88      0.99x    N/A           ok                                                                      
+15           proposal_15    13607.31      1.05x    N/A           ok                                                                      
+16           proposal_16    13598.11      1.05x    N/A           ok                                                                      
+17           proposal_17    13657.51      1.05x    N/A           ok                                                                      
+18           proposal_18    14475.45      0.99x    N/A           ok                                                                      
+19           proposal_19    13784.20      1.04x    N/A           ok                                                                      
+20           proposal_20    13542.40      1.06x    N/A           ok                                                                      
+

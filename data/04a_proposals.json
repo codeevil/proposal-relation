@@ -1,0 +1,244 @@
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "校正严重行数估计偏差，强制最优连接顺序与哈希连接，消除嵌套循环的指数级开销",
+    "core_optimization_points": [
+      "识别并校正keyword表因LIKE '%sequel%'导致的严重估计偏差，实际匹配行数远高于估计值",
+      "将info_type作为驱动表，通过Leading强制连接顺序为it → k → mk → mi_idx → t，避免早期中间结果膨胀",
+      "强制mk与mi_idx使用HashJoin，替代原低效嵌套循环，避免对mi_idx的12951次重复索引扫描",
+      "使用Rows Hint校正mk与mi_idx连接后的行数估计，修正优化器对中间结果集规模的误判"
+    ],
+    "hint_combination": "/*+ Rows(k mk *0.01) Leading( (it k mk mi_idx t) ) HashJoin(k mk) HashJoin(mk mi_idx) HashJoin(mi_idx t) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%，核心收益来自消除嵌套循环对mi_idx的12951次重复扫描，将O(n²)复杂度降至O(n)，同时修复统计信息失准导致的计划错误"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "强制使用覆盖索引实现仅索引扫描，彻底消除回表IO，优化大表扫描效率",
+    "core_optimization_points": [
+      "识别movie_keyword表的keyword_id字段具有高区分度（n_distinct=14863），且与movie_id构成联合索引",
+      "强制movie_keyword使用keyword_id_movie_keyword索引进行仅索引扫描，避免回表",
+      "强制movie_info_idx使用movie_id_movie_info_idx索引进行仅索引扫描，避免回表",
+      "通过IndexOnlyScan强制优化器使用覆盖索引路径，减少随机IO开销"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(mk keyword_id_movie_keyword) IndexOnlyScan(mi_idx movie_id_movie_info_idx) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自消除movie_keyword与movie_info_idx的回表IO，减少随机页读取，尤其在SSD环境下效果显著"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "重构连接顺序，将高选择性过滤表前置，控制中间结果集增长速率",
+    "core_optimization_points": [
+      "识别info_type表仅返回1行，且过滤条件为等值，应作为最外层驱动表",
+      "将keyword表的LIKE '%sequel%'过滤提前，减少后续连接的数据量",
+      "通过Leading强制连接顺序为it → k → mk → mi_idx → t，使小结果集逐步合并",
+      "避免t表在早期连接中被重复扫描，提升整体执行效率"
+    ],
+    "hint_combination": "/*+ Leading( (it k mk mi_idx t) ) */",
+    "expected_performance_benefit": "预计执行耗时降低35%-50%，核心收益来自控制中间结果集增长，避免早期连接产生过量数据，使后续连接更高效"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "强制哈希连接替代嵌套循环，解决大表连接性能瓶颈",
+    "core_optimization_points": [
+      "识别mk与mi_idx连接后结果集达8463行，而嵌套循环导致mi_idx被扫描12951次，开销巨大",
+      "强制mk与mi_idx使用HashJoin，避免对mi_idx的重复索引扫描",
+      "通过HashJoin(mk mi_idx)显式指定连接方法，绕过优化器错误决策",
+      "提升连接效率，将O(n×m)复杂度降为O(n+m)"
+    ],
+    "hint_combination": "/*+ HashJoin(mk mi_idx) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-70%，核心收益来自消除mi_idx表的12951次重复索引扫描，将连接从嵌套循环优化为哈希连接"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "通过Rows Hint校正统计信息偏差，修正优化器对中间结果集的严重误判",
+    "core_optimization_points": [
+      "计算keyword表中LIKE '%sequel%'的实际匹配行数：134170 × (1 - 134140/134170) ≈ 30行，而优化器估计为13行，偏差约2.3倍",
+      "计算mk表中与k连接后的实际行数：30 × 432 = 12960行，而优化器估计为438行，偏差约29.6倍",
+      "使用Rows(mk mi_idx *0.03)强制修正中间结果集估计，使优化器选择更优路径",
+      "避免因估计过低导致连接方法选择错误"
+    ],
+    "hint_combination": "/*+ Rows(mk mi_idx *0.03) */",
+    "expected_performance_benefit": "预计执行耗时降低45%-60%，核心收益来自修复优化器对中间结果集规模的严重低估，促使选择哈希连接而非嵌套循环"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "启用Memoize缓存机制，避免对内层表的重复查询，提升嵌套循环效率",
+    "core_optimization_points": [
+      "识别mk表在k.id变化时被重复扫描，但k.id变化次数为30次，而mk表扫描次数为30次，存在重复查询",
+      "强制对mk与mi_idx连接启用Memoize缓存，复用相同movie_id的查询结果",
+      "通过Memoize(mk mi_idx)避免对mi_idx的重复索引扫描",
+      "减少重复IO，提升嵌套循环效率"
+    ],
+    "hint_combination": "/*+ Memoize(mk mi_idx) */",
+    "expected_performance_benefit": "预计执行耗时降低25%-40%，核心收益来自减少对mi_idx表的重复索引扫描，尤其在k.id重复值较多时效果显著"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "强制使用位图扫描替代顺序扫描，优化keyword表的LIKE过滤效率",
+    "core_optimization_points": [
+      "识别keyword表的keyword字段无索引，LIKE '%sequel%'导致全表扫描",
+      "强制使用BitmapScan，利用位图扫描的批量回表特性，减少随机IO",
+      "通过BitmapScan(k)强制优化器使用位图扫描路径",
+      "结合索引条件，提升扫描效率"
+    ],
+    "hint_combination": "/*+ BitmapScan(k) */",
+    "expected_performance_benefit": "预计执行耗时降低20%-35%，核心收益来自减少随机页读取，利用位图扫描的批量回表特性，提升大表过滤效率"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "提升并行度，加速大表扫描，充分利用多核CPU资源",
+    "core_optimization_points": [
+      "识别movie_keyword表有24454页，远超min_parallel_table_scan_size（默认8MB）",
+      "强制设置Parallel(mk 4)，启用4个并行Worker加速扫描",
+      "识别movie_info_idx表有7935页，也具备并行扫描潜力",
+      "通过Parallel提升大表扫描并行度，降低总执行时间"
+    ],
+    "hint_combination": "/*+ Parallel(mk 4) Parallel(mi_idx 2) */",
+    "expected_performance_benefit": "预计执行耗时降低25%-45%，核心收益来自利用多核CPU并行处理大表扫描，尤其在高并发场景下表现优异"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "通过Set调整代价模型参数，引导优化器选择更优路径",
+    "core_optimization_points": [
+      "识别SSD存储环境，random_page_cost应设为1.1而非默认4.0",
+      "通过Set(random_page_cost 1.1)降低索引扫描代价，使优化器更倾向使用索引",
+      "设置work_mem为128MB，避免哈希/排序溢出到磁盘",
+      "调整cpu_tuple_cost以匹配实际CPU性能"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.1) Set(work_mem '128MB') Set(cpu_tuple_cost 0.008) */",
+    "expected_performance_benefit": "预计执行耗时降低20%-35%，核心收益来自使代价模型更贴合真实硬件性能，促使优化器选择更优路径"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "强制使用合并连接，复用索引排序特性，避免额外排序开销",
+    "core_optimization_points": [
+      "识别movie_keyword与movie_info_idx的连接键为movie_id，且均有B树索引",
+      "强制使用MergeJoin，复用索引的有序性，避免额外排序",
+      "通过MergeJoin(mk mi_idx)显式指定连接方法",
+      "提升连接效率，避免排序开销"
+    ],
+    "hint_combination": "/*+ MergeJoin(mk mi_idx) */",
+    "expected_performance_benefit": "预计执行耗时降低25%-40%，核心收益来自复用索引排序，避免额外排序开销，尤其在数据量大时效果显著"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "禁用嵌套循环连接，强制使用哈希连接，解决性能瓶颈",
+    "core_optimization_points": [
+      "识别嵌套循环连接导致mi_idx被扫描12951次，性能极差",
+      "通过NoNestLoop(mk mi_idx)强制禁止嵌套循环",
+      "引导优化器选择哈希连接，提升连接效率",
+      "避免低效的重复扫描"
+    ],
+    "hint_combination": "/*+ NoNestLoop(mk mi_idx) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-70%，核心收益来自强制禁用低效的嵌套循环，迫使优化器选择哈希连接"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "优化扫描路径，强制使用索引扫描替代顺序扫描，提升过滤效率",
+    "core_optimization_points": [
+      "识别info_type表仅113行，且过滤条件为等值，应使用索引扫描",
+      "强制使用IndexScan(it info_type_pkey)避免顺序扫描",
+      "识别keyword表的keyword字段无索引，但LIKE条件可考虑位图扫描",
+      "通过IndexScan提升小表扫描效率"
+    ],
+    "hint_combination": "/*+ IndexScan(it info_type_pkey) */",
+    "expected_performance_benefit": "预计执行耗时降低15%-25%，核心收益来自对小表使用索引扫描，减少扫描开销"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "通过Rows Hint强制修正连接后行数估计，引导优化器选择更优路径",
+    "core_optimization_points": [
+      "计算t表中production_year > 2005的实际行数：2528308 × (1 - 123/123) ≈ 2528308 × (1 - 0.0277) ≈ 2458000行",
+      "识别t表被扫描5820次，但实际行数远高于估计值",
+      "使用Rows(t *0.1)强制修正t表的行数估计，避免优化器误判",
+      "引导优化器选择更优连接顺序"
+    ],
+    "hint_combination": "/*+ Rows(t *0.1) */",
+    "expected_performance_benefit": "预计执行耗时降低20%-30%，核心收益来自修正t表的行数估计，避免因估计过低导致连接顺序错误"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "强制使用位图扫描与索引扫描组合，优化多条件过滤效率",
+    "core_optimization_points": [
+      "识别keyword表的keyword字段无索引，但LIKE '%sequel%'可考虑位图扫描",
+      "强制使用BitmapScan(k)结合索引条件，提升过滤效率",
+      "通过BitmapScan与IndexScan组合，实现高效扫描",
+      "减少随机IO开销"
+    ],
+    "hint_combination": "/*+ BitmapScan(k) IndexScan(k keyword_pkey) */",
+    "expected_performance_benefit": "预计执行耗时降低25%-40%，核心收益来自位图扫描的批量回表特性，提升大表过滤效率"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "禁用顺序扫描，强制使用索引扫描，避免全表扫描开销",
+    "core_optimization_points": [
+      "识别movie_keyword表有452万行，过滤选择性差，但存在索引",
+      "通过NoSeqScan(mk)强制禁止顺序扫描",
+      "引导优化器使用索引扫描路径",
+      "提升扫描效率"
+    ],
+    "hint_combination": "/*+ NoSeqScan(mk) */",
+    "expected_performance_benefit": "预计执行耗时降低30%-50%，核心收益来自避免大表全表扫描，强制使用索引扫描"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "调整连接顺序，将大表最后连接，避免中间结果膨胀",
+    "core_optimization_points": [
+      "识别t表有252万行，应作为最后连接的表",
+      "通过Leading( (it k mk mi_idx t) )强制将t表置于最后",
+      "避免早期连接产生超大中间结果",
+      "控制连接顺序，提升整体效率"
+    ],
+    "hint_combination": "/*+ Leading( (it k mk mi_idx t) ) */",
+    "expected_performance_benefit": "预计执行耗时降低25%-40%，核心收益来自控制中间结果集增长，避免早期连接产生过量数据"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "强制使用合并连接，复用索引排序，避免额外排序开销",
+    "core_optimization_points": [
+      "识别movie_keyword与movie_info_idx的连接键为movie_id，且均有B树索引",
+      "强制使用MergeJoin，复用索引的有序性",
+      "通过MergeJoin(mk mi_idx)显式指定连接方法",
+      "避免额外排序开销"
+    ],
+    "hint_combination": "/*+ MergeJoin(mk mi_idx) */",
+    "expected_performance_benefit": "预计执行耗时降低25%-40%，核心收益来自复用索引排序，避免额外排序开销"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "提升并行度，加速大表扫描，充分利用多核CPU资源",
+    "core_optimization_points": [
+      "识别movie_keyword表有24454页，具备并行扫描潜力",
+      "强制设置Parallel(mk 8)，启用8个并行Worker加速扫描",
+      "识别movie_info_idx表有7935页，也具备并行扫描潜力",
+      "通过Parallel提升大表扫描并行度"
+    ],
+    "hint_combination": "/*+ Parallel(mk 8) Parallel(mi_idx 4) */",
+    "expected_performance_benefit": "预计执行耗时降低35%-60%，核心收益来自充分利用多核CPU并行处理大表扫描"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "通过Set调整代价模型，引导优化器选择更优路径",
+    "core_optimization_points": [
+      "识别SSD存储环境，random_page_cost应设为1.1",
+      "通过Set(random_page_cost 1.1)降低索引扫描代价",
+      "设置max_parallel_workers_per_gather为8，提升并行度",
+      "调整代价模型，使优化器更倾向使用索引"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.1) Set(max_parallel_workers_per_gather 8) */",
+    "expected_performance_benefit": "预计执行耗时降低20%-35%，核心收益来自使代价模型更贴合真实硬件性能"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "强制使用仅索引扫描，避免回表IO，提升大表扫描效率",
+    "core_optimization_points": [
+      "识别movie_keyword表的keyword_id与movie_id构成联合索引，且查询所需列全部包含",
+      "强制使用IndexOnlyScan(mk keyword_id_movie_keyword)避免回表",
+      "通过IndexOnlyScan提升扫描效率，减少随机IO",
+      "避免回表开销"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(mk keyword_id_movie_keyword) */",
+    "expected_performance_benefit": "预计执行耗时降低30%-50%，核心收益来自避免回表IO，提升大表扫描效率"
+  }
+]
+```

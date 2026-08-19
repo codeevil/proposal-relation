@@ -1,5 +1,5 @@
 
-=== query013_spj_0.sql ===
+=== 01a.sql ===
 Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error                                                       
 -----------  -----------  ------------  -------  ----------  ------------------------------------------------------------
 0            baseline     970.70        1.00x    ok                                                                      
@@ -25,7 +25,7 @@ Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error
 20           proposal_20  970.97        1.00x    ok                                                                      
 
 
-=== query018_spj_0.sql ===
+=== 01b.sql ===
 Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error                                                       
 -----------  -----------  ------------  -------  ----------  ------------------------------------------------------------
 0            baseline     585.55        1.00x    ok                                                                      
@@ -51,7 +51,7 @@ Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error
 20           proposal_20  465.73        1.26x    hint_error  NoNestLoop(*) Parallel(catalog_sales 12 soft) | number of...
 
 
-=== query019_spj_0.sql ===
+=== 01c.sql ===
 Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error                                                       
 -----------  -----------  ------------  -------  ----------  ------------------------------------------------------------
 0            baseline     246.59        1.00x    ok                                                                      
@@ -77,7 +77,7 @@ Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error
 20           proposal_20  1540.41       0.16x    ok                                                                      
 
 
-=== query025_spj_0.sql ===
+=== 01d.sql ===
 Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error                                                       
 -----------  -----------  ------------  -------  ----------  ------------------------------------------------------------
 0            baseline     1529.26       1.00x    ok                                                                      
@@ -129,7 +129,7 @@ Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error
 20           proposal_20  8970.39       0.11x    ok                                                                      
 
 
-=== query050_spj_0.sql ===
+=== 06d.sql ===
 Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error                                                       
 -----------  -----------  ------------  -------  ----------  ------------------------------------------------------------
 0            baseline     402.28        1.00x    ok                                                                      
@@ -155,7 +155,7 @@ Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error
 20           proposal_20  11892.63      0.03x    ok                                                                      
 
 
-=== query072_spj_0.sql ===
+=== 06e.sql ===
 Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error                                                       
 -----------  -----------  ------------  -------  ----------  ------------------------------------------------------------
 0            baseline     492.44        1.00x    ok                                                                      
@@ -181,7 +181,7 @@ Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error
 20           proposal_20  1277.35       0.39x    hint_error  Set(work_mem '512MB') Rows(catalog_sales *0.16) Rows(d1 *...
 
 
-=== query085_spj_0.sql ===
+=== 26a.sql ===
 Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error                                                       
 -----------  -----------  ------------  -------  ----------  ------------------------------------------------------------
 0            baseline     362.85        1.00x    ok                                                                      
@@ -207,7 +207,7 @@ Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error
 20           proposal_20  547.53        0.66x    hint_error  Leading((date_dim web_sales web_returns (customer_address...
 
 
-=== query099_spj_0.sql ===
+=== 27a.sql ===
 Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error                                                       
 -----------  -----------  ------------  -------  ----------  ------------------------------------------------------------
 0            baseline     87.16         1.00x    ok                                                                      
@@ -233,7 +233,7 @@ Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error
 20           proposal_20  3102.90       0.03x    hint_error  Rows(date_dim *0.075) | Rows hint requires at least two r...
 
 
-=== query100_spj_0.sql ===
+=== 27b.sql ===
 Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error                                                       
 -----------  -----------  ------------  -------  ----------  ------------------------------------------------------------
 0            baseline     145.75        1.00x    ok                                                                      
@@ -259,7 +259,7 @@ Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error
 20           proposal_20  368.01        0.40x    hint_error  Parallel(store_sales 10 soft) | number of workers = 10 is...
 
 
-=== query101_spj_0.sql ===
+=== 27c.sql ===
 Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error                                                       
 -----------  -----------  ------------  -------  ----------  ------------------------------------------------------------
 0            baseline     617.66        1.00x    ok                                                                      
@@ -285,7 +285,7 @@ Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error
 20           proposal_20  4243.73       0.15x    ok                                                                      
 
 
-=== query102_spj_0.sql ===
+=== 28a.sql ===
 Proposal ID  Label        Elapsed (ms)  Speedup  Status      Error                                                       
 -----------  -----------  ------------  -------  ----------  ------------------------------------------------------------
 0            baseline     6969.11       1.00x    ok                                                                      

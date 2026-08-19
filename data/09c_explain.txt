@@ -1,0 +1,43 @@
+Finalize Aggregate  (cost=105967.30..105967.31 rows=1 width=128) (actual time=323.608..359.792 rows=1 loops=1)
+  ->  Gather  (cost=105966.96..105967.27 rows=3 width=128) (actual time=323.255..359.781 rows=4 loops=1)
+        Workers Planned: 3
+        Workers Launched: 3
+        ->  Partial Aggregate  (cost=104966.96..104966.97 rows=1 width=128) (actual time=317.877..317.882 rows=1 loops=4)
+              ->  Nested Loop  (cost=71304.89..104965.61 rows=135 width=64) (actual time=182.013..316.919 rows=2036 loops=4)
+                    Join Filter: (ci.movie_id = t.id)
+                    ->  Nested Loop  (cost=71304.46..104894.62 rows=135 width=55) (actual time=181.966..310.470 rows=2036 loops=4)
+                          ->  Nested Loop  (cost=71304.04..104728.42 rows=373 width=59) (actual time=181.057..297.640 rows=4586 loops=4)
+                                ->  Nested Loop  (cost=71303.61..104637.82 rows=135 width=51) (actual time=180.998..288.798 rows=1932 loops=4)
+                                      ->  Hash Join  (cost=71303.18..104456.61 rows=282 width=39) (actual time=180.893..280.611 rows=2051 loops=4)
+                                            Hash Cond: (ci.role_id = rt.id)
+                                            ->  Nested Loop  (cost=71302.02..104443.43 rows=3383 width=43) (actual time=180.752..280.054 rows=2051 loops=4)
+                                                  Join Filter: (n.id = ci.person_id)
+                                                  ->  Parallel Hash Join  (cost=71301.58..86368.37 rows=1349 width=39) (actual time=179.574..238.246 rows=2631 loops=4)
+                                                        Hash Cond: (an.person_id = n.id)
+                                                        ->  Parallel Seq Scan on aka_name an  (cost=0.00..14303.56 rows=290756 width=20) (actual time=0.019..18.445 rows=225336 loops=4)
+                                                        ->  Parallel Hash  (cost=71241.14..71241.14 rows=4835 width=19) (actual time=179.259..179.260 rows=12503 loops=4)
+                                                              Buckets: 65536 (originally 32768)  Batches: 1 (originally 1)  Memory Usage: 3584kB
+                                                              ->  Parallel Seq Scan on name n  (cost=0.00..71241.14 rows=4835 width=19) (actual time=75.183..173.076 rows=12503 loops=4)
+                                                                    Filter: (((name)::text ~~ '%An%'::text) AND ((gender)::text = 'f'::text))
+                                                                    Rows Removed by Filter: 1029370
+                                                  ->  Index Scan using person_id_cast_info on cast_info ci  (cost=0.44..13.24 rows=13 width=16) (actual time=0.014..0.016 rows=1 loops=10525)
+                                                        Index Cond: (person_id = an.person_id)
+                                                        Filter: ((note)::text = ANY ('{(voice),"(voice: Japanese version)","(voice) (uncredited)","(voice: English version)"}'::text[]))
+                                                        Rows Removed by Filter: 44
+                                            ->  Hash  (cost=1.15..1.15 rows=1 width=4) (actual time=0.039..0.040 rows=1 loops=4)
+                                                  Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                                  ->  Seq Scan on role_type rt  (cost=0.00..1.15 rows=1 width=4) (actual time=0.031..0.032 rows=1 loops=4)
+                                                        Filter: ((role)::text = 'actress'::text)
+                                                        Rows Removed by Filter: 11
+                                      ->  Index Scan using char_name_pkey on char_name chn  (cost=0.43..0.64 rows=1 width=20) (actual time=0.004..0.004 rows=1 loops=8204)
+                                            Index Cond: (id = ci.person_role_id)
+                                ->  Index Scan using movie_id_movie_companies on movie_companies mc  (cost=0.43..0.62 rows=5 width=8) (actual time=0.003..0.004 rows=2 loops=7726)
+                                      Index Cond: (movie_id = ci.movie_id)
+                          ->  Index Scan using company_name_pkey on company_name cn  (cost=0.42..0.45 rows=1 width=4) (actual time=0.003..0.003 rows=0 loops=18345)
+                                Index Cond: (id = mc.company_id)
+                                Filter: ((country_code)::text = '[us]'::text)
+                                Rows Removed by Filter: 1
+                    ->  Index Scan using title_pkey on title t  (cost=0.43..0.51 rows=1 width=21) (actual time=0.003..0.003 rows=1 loops=8144)
+                          Index Cond: (id = mc.movie_id)
+Planning Time: 11.082 ms
+Execution Time: 359.973 ms
