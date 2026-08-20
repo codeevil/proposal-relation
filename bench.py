@@ -1395,6 +1395,97 @@ def cmd_run_proposals_all(args):
                       stat_path=args.stat)
 
 
+def gen_proposals_for_sql(sql_path: Path, opts: DbOptions,
+                          output_dir: Path = None) -> Path:
+    """Generate proposals JSON for a single SQL file (steps 1-3 of the pipeline).
+
+    Executes:
+      1. gen_explain   → data/{stem}_explain.txt
+      2. gen_stat      → data/{stem}_stat.json
+      3. proposal_pg.py → data/{stem}_proposals.json (or custom output_dir)
+
+    Returns the path to the generated proposals file.
+    """
+    sql_path = Path(sql_path)
+    logger.info(f"=== Generating proposals for {sql_path.name} ===")
+
+    output_dir = Path(output_dir) if output_dir else DATA_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info("Step 1/3: Generating EXPLAIN ...")
+    explain_path = gen_explain(sql_path, opts,
+                               output_path=output_dir / f"{sql_path.stem}_explain.txt")
+
+    logger.info("Step 2/3: Generating statistics ...")
+    stat_path = gen_stat(sql_path, opts,
+                         output_path=output_dir / f"{sql_path.stem}_stat.json")
+
+    logger.info("Step 3/3: Generating proposals via proposal_pg.py ...")
+    proposals_path = gen_proposals(sql_path, opts,
+                                   stat_path=stat_path,
+                                   explain_path=explain_path,
+                                   output_path=output_dir / f"{sql_path.stem}_proposals.json")
+
+    return proposals_path
+
+
+def cmd_gen_proposals(args):
+    sql_path = Path(args.sql)
+    if not sql_path.exists():
+        print(f"[ERROR] SQL file not found: {sql_path}", file=sys.stderr)
+        sys.exit(1)
+
+    opts = DbOptions(host=args.host, port=args.port, user=args.user,
+                     database=args.database)
+    output_dir = Path(args.output) if args.output else None
+    result = gen_proposals_for_sql(sql_path, opts, output_dir=output_dir)
+    print(f"[INFO] Proposals written to: {result}")
+
+
+def gen_proposals_all(directory: Path, opts: DbOptions,
+                      output_dir: Path = None) -> None:
+    """Generate proposals JSON for every .sql file under directory (recursive).
+
+    Reuses ``discover_sql_files`` for recursive lookup and
+    ``gen_proposals_for_sql`` for per-file processing. Sleeps between
+    invocations to avoid hammering the DB during EXPLAIN ANALYZE.
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        print(f"[ERROR] Directory not found: {directory}", file=sys.stderr)
+        sys.exit(1)
+
+    sql_files = discover_sql_files(directory)
+    if not sql_files:
+        print(f"[WARNING] No .sql files found under {directory}")
+        return
+
+    output_dir = Path(output_dir) if output_dir else DATA_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"Found {len(sql_files)} SQL file(s) under {directory}")
+    logger.info(f"Proposals output directory: {output_dir}")
+    try:
+        for i, sql_path in enumerate(sql_files, 1):
+            logger.info(f"--- [{i}/{len(sql_files)}] {sql_path.name} ---")
+            try:
+                gen_proposals_for_sql(sql_path, opts, output_dir=output_dir)
+            except Exception as e:
+                logger.error(f"Failed to process {sql_path}: {e}")
+            if i < len(sql_files):
+                time.sleep(opts.sleep)
+    finally:
+        pass
+    print(f"[INFO] All proposals written to: {output_dir}")
+
+
+def cmd_gen_proposals_all(args):
+    opts = DbOptions(host=args.host, port=args.port, user=args.user,
+                     database=args.database, sleep=args.sleep)
+    output_dir = Path(args.output) if args.output else None
+    gen_proposals_all(Path(args.dir), opts, output_dir=output_dir)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Benchmark utilities")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1480,6 +1571,37 @@ def main():
     p_run_proposals_all.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
     p_run_proposals_all.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
     p_run_proposals_all.set_defaults(func=cmd_run_proposals_all)
+
+    # gen_proposals
+    p_gen_proposals = subparsers.add_parser(
+        "gen_proposals",
+        help="Generate proposals JSON for a single SQL file (explain + stat + proposal_pg)",
+    )
+    p_gen_proposals.add_argument("--sql", type=str, required=True, help="Path to SQL file")
+    p_gen_proposals.add_argument("--output", type=str, default=None,
+                                 help="Output directory for generated files (default: ./data/)")
+    p_gen_proposals.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
+    p_gen_proposals.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
+    p_gen_proposals.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
+    p_gen_proposals.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
+    p_gen_proposals.set_defaults(func=cmd_gen_proposals)
+
+    # gen_proposals_all
+    p_gen_proposals_all = subparsers.add_parser(
+        "gen_proposals_all",
+        help="Generate proposals JSON for every SQL file in a directory (recursive)",
+    )
+    p_gen_proposals_all.add_argument("--dir", type=str, required=True,
+                                     help="Directory containing SQL files (recursive)")
+    p_gen_proposals_all.add_argument("--output", type=str, default=None,
+                                     help="Output directory for generated files (default: ./data/)")
+    p_gen_proposals_all.add_argument("--sleep", type=float, default=3.0,
+                                     help="Seconds to sleep between SQL files (default: 3.0)")
+    p_gen_proposals_all.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
+    p_gen_proposals_all.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
+    p_gen_proposals_all.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
+    p_gen_proposals_all.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
+    p_gen_proposals_all.set_defaults(func=cmd_gen_proposals_all)
 
     args = parser.parse_args()
     args.func(args)
