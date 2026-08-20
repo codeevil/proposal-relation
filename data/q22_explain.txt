@@ -1,0 +1,30 @@
+GroupAggregate  (cost=96518.20..97599.66 rows=7472 width=72) (actual time=647.361..694.346 rows=7 loops=1)
+  Group Key: (SUBSTRING(customer.c_phone FROM 1 FOR 2))
+  InitPlan 1 (returns $1)
+    ->  Finalize Aggregate  (cost=46700.65..46700.66 rows=1 width=32) (actual time=254.091..254.195 rows=1 loops=1)
+          ->  Gather  (cost=46700.22..46700.63 rows=4 width=32) (actual time=253.500..254.174 rows=5 loops=1)
+                Workers Planned: 4
+                Workers Launched: 4
+                ->  Partial Aggregate  (cost=45700.22..45700.23 rows=1 width=32) (actual time=245.799..245.801 rows=1 loops=5)
+                      ->  Parallel Seq Scan on customer customer_1  (cost=0.00..45670.51 rows=11882 width=6) (actual time=0.037..235.386 rows=76355 loops=5)
+                            Filter: ((c_acctbal > 0.00) AND (SUBSTRING(c_phone FROM 1 FOR 2) = ANY ('{13,31,23,29,30,18,17}'::text[])))
+                            Rows Removed by Filter: 223645
+  ->  Gather Merge  (cost=49817.54..50712.19 rows=7472 width=38) (actual time=642.975..680.849 rows=63914 loops=1)
+        Workers Planned: 4
+        Params Evaluated: $1
+        Workers Launched: 3
+        ->  Sort  (cost=48817.48..48822.15 rows=1868 width=38) (actual time=383.681..385.133 rows=15978 loops=4)
+              Sort Key: (SUBSTRING(customer.c_phone FROM 1 FOR 2))
+              Sort Method: quicksort  Memory: 1691kB
+              Worker 0:  Sort Method: quicksort  Memory: 1691kB
+              Worker 1:  Sort Method: quicksort  Memory: 1208kB
+              Worker 2:  Sort Method: quicksort  Memory: 1207kB
+              ->  Nested Loop Anti Join  (cost=0.43..48715.98 rows=1868 width=38) (actual time=0.170..377.507 rows=15978 loops=4)
+                    ->  Parallel Seq Scan on customer  (cost=0.00..45670.51 rows=4375 width=26) (actual time=0.037..220.379 rows=47673 loops=4)
+                          Filter: ((c_acctbal > $1) AND (SUBSTRING(c_phone FROM 1 FOR 2) = ANY ('{13,31,23,29,30,18,17}'::text[])))
+                          Rows Removed by Filter: 327327
+                    ->  Index Only Scan using idx_orders_custkey on orders  (cost=0.43..3.28 rows=17 width=4) (actual time=0.003..0.003 rows=1 loops=190691)
+                          Index Cond: (o_custkey = customer.c_custkey)
+                          Heap Fetches: 0
+Planning Time: 1.630 ms
+Execution Time: 694.637 ms

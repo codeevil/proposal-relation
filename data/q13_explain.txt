@@ -1,0 +1,22 @@
+Sort  (cost=1475280.00..1475280.50 rows=200 width=16) (actual time=7664.522..7738.645 rows=46 loops=1)
+  Sort Key: (count(*)) DESC, (count(orders.o_orderkey)) DESC
+  Sort Method: quicksort  Memory: 27kB
+  ->  HashAggregate  (cost=1475270.36..1475272.36 rows=200 width=16) (actual time=7664.463..7738.591 rows=46 loops=1)
+        Group Key: count(orders.o_orderkey)
+        Batches: 1  Memory Usage: 40kB
+        ->  Finalize GroupAggregate  (cost=1000.92..1452770.90 rows=1499964 width=12) (actual time=43.840..7455.671 rows=1500000 loops=1)
+              Group Key: customer.c_custkey
+              ->  Gather Merge  (cost=1000.92..1407771.98 rows=5999856 width=12) (actual time=43.760..7008.470 rows=1500000 loops=1)
+                    Workers Planned: 4
+                    Workers Launched: 4
+                    ->  Partial GroupAggregate  (cost=0.86..692131.23 rows=1499964 width=12) (actual time=0.635..6671.145 rows=300000 loops=5)
+                          Group Key: customer.c_custkey
+                          ->  Nested Loop Left Join  (cost=0.86..658383.65 rows=3749587 width=8) (actual time=0.153..6254.527 rows=3067521 loops=5)
+                                ->  Parallel Index Only Scan using customer_pkey on customer  (cost=0.43..27714.16 rows=374991 width=4) (actual time=0.068..60.261 rows=300000 loops=5)
+                                      Heap Fetches: 0
+                                ->  Index Scan using idx_orders_custkey on orders  (cost=0.43..1.51 rows=17 width=8) (actual time=0.003..0.019 rows=10 loops=1500000)
+                                      Index Cond: (o_custkey = customer.c_custkey)
+                                      Filter: ((o_comment)::text !~~ '%special%requests%'::text)
+                                      Rows Removed by Filter: 0
+Planning Time: 1.424 ms
+Execution Time: 7738.926 ms

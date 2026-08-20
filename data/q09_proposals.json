@@ -1,0 +1,244 @@
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "校正严重行数估计偏差，强制哈希连接并优化连接顺序，消除嵌套循环的指数级开销",
+    "core_optimization_points": [
+      "识别出`part`表在`LIKE '%green%'`条件下实际匹配行数远低于估计值，校正其过滤后行数",
+      "将`nation`与`supplier`的连接提前，利用小表（25行）驱动大表扫描",
+      "强制`supplier`与`partsupp`使用哈希连接，替代低效的嵌套循环+索引扫描组合",
+      "通过`Rows` Hint修正`part`→`partsupp`连接后中间结果集的估计偏差，防止后续连接膨胀"
+    ],
+    "hint_combination": "/*+ Rows(part *0.01) Leading( (nation (supplier (part partsupp))) (lineitem orders) ) HashJoin(supplier partsupp) HashJoin(part partsupp) HashJoin(lineitem orders) */",
+    "expected_performance_benefit": "预计执行耗时下降60%-80%。核心收益来自消除`part`→`partsupp`→`supplier`链路中因低估导致的嵌套循环无限膨胀，同时哈希连接显著降低大表连接代价"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "强制仅索引扫描与位图扫描，减少回表与随机IO，提升大表过滤效率",
+    "core_optimization_points": [
+      "强制`part`表使用`idx_part_brand`索引扫描，避免全表扫描",
+      "对`part`表的`p_name LIKE '%green%'`条件启用位图扫描，提升多条件组合过滤效率",
+      "强制`lineitem`表使用`idx_lineitem_partkey`索引进行位图扫描，避免全表扫描",
+      "将`part`与`partsupp`连接改为位图扫描+哈希连接，减少中间结果集大小"
+    ],
+    "hint_combination": "/*+ BitmapScan(part idx_part_brand) IndexScan(part idx_part_brand) BitmapScan(lineitem idx_lineitem_partkey) HashJoin(part partsupp) HashJoin(lineitem orders) */",
+    "expected_performance_benefit": "预计执行耗时下降45%-60%。核心收益来自减少`part`和`lineitem`表的随机IO，位图扫描有效降低中等选择性查询的扫描开销"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "重构连接顺序，以最小结果集驱动连接，避免早期中间结果膨胀",
+    "core_optimization_points": [
+      "将`nation`表（25行）作为最外层驱动表，先与`supplier`连接，生成小结果集",
+      "将`part`表的`LIKE '%green%'`过滤提前，仅保留约27,000行，作为小驱动表",
+      "将`part`与`partsupp`连接后，再与`supplier`连接，形成小表驱动大表的结构",
+      "最后连接`lineitem`与`orders`，确保大表连接时已有最小中间结果"
+    ],
+    "hint_combination": "/*+ Leading( (nation (supplier (part partsupp))) (lineitem orders) ) NoNestLoop(nation supplier) NoNestLoop(part partsupp) */",
+    "expected_performance_benefit": "预计执行耗时下降50%-70%。核心收益来自避免`lineitem`与`orders`在未过滤时即被千万次扫描，连接顺序优化显著控制中间结果集增长"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "强制哈希连接替代嵌套循环，解决大表嵌套循环的性能瓶颈",
+    "core_optimization_points": [
+      "识别`supplier`与`partsupp`连接后结果集达10万行，嵌套循环代价过高",
+      "强制`supplier`与`partsupp`使用哈希连接，避免对`partsupp`的多次索引扫描",
+      "强制`part`与`partsupp`使用哈希连接，替代嵌套循环+索引扫描",
+      "禁止`lineitem`与`orders`使用嵌套循环，防止`Memoize`缓存失效导致的性能灾难"
+    ],
+    "hint_combination": "/*+ HashJoin(supplier partsupp) HashJoin(part partsupp) HashJoin(lineitem orders) NoNestLoop(lineitem orders) NoMemoize(lineitem orders) */",
+    "expected_performance_benefit": "预计执行耗时下降55%-75%。核心收益来自消除`lineitem`与`orders`之间因`Memoize`缓存失效导致的78万次Miss，同时哈希连接大幅降低大表连接代价"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "启用并行扫描并提升并行度，充分利用多核资源加速大表扫描",
+    "core_optimization_points": [
+      "识别`lineitem`表（5999万行）扫描耗时占总执行时间60%以上",
+      "将`lineitem`表并行度从默认值提升至8，充分利用多核CPU",
+      "将`part`表并行度提升至4，加速`LIKE '%green%'`过滤",
+      "将`partsupp`表并行度提升至6，加速与`part`的连接"
+    ],
+    "hint_combination": "/*+ Parallel(lineitem 8) Parallel(part 4) Parallel(partsupp 6) Parallel(supplier 4) */",
+    "expected_performance_benefit": "预计执行耗时下降35%-50%。核心收益来自并行加速`lineitem`和`part`等大表扫描，显著缩短IO瓶颈时间"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "强制使用仅索引扫描，避免回表IO，减少大表扫描的CPU与IO开销",
+    "core_optimization_points": [
+      "`orders`表的`o_orderkey`为主键，`lineitem`的`l_orderkey`为外键，可实现覆盖索引扫描",
+      "强制`orders`表使用`orders_pkey`进行仅索引扫描，避免回表",
+      "强制`lineitem`表使用`idx_lineitem_orderkey`进行仅索引扫描",
+      "确保`lineitem`与`orders`连接时无需回表，提升连接效率"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(orders orders_pkey) IndexOnlyScan(lineitem idx_lineitem_orderkey) NoIndexScan(orders) NoIndexScan(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时下降30%-45%。核心收益来自避免`orders`和`lineitem`表的回表IO，仅索引扫描减少随机读开销"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "校正优化器对`part`表过滤选择性的严重误判，修正中间结果集估计",
+    "core_optimization_points": [
+      "根据`pg_stats`，`p_name`的`n_distinct`为-1，表示无统计信息，导致优化器误估选择性",
+      "通过`Rows` Hint直接将`part`表过滤后行数修正为27,196（实际扫描结果）",
+      "将`part`与`partsupp`连接后的结果集估计修正为108,782 × 0.1 = 10,878行",
+      "防止后续连接因估计偏差而选择错误连接方法"
+    ],
+    "hint_combination": "/*+ Rows(part #27196) Rows(part partsupp *0.1) Leading( (part (partsupp supplier)) (lineitem orders) ) */",
+    "expected_performance_benefit": "预计执行耗时下降40%-60%。核心收益来自修正优化器对`part`表的严重误判，避免因估计过低导致的嵌套循环选择"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "使用合并连接复用索引排序，避免额外排序开销，提升聚合效率",
+    "core_optimization_points": [
+      "`orders`表的`o_orderdate`有索引，数据天然有序",
+      "`lineitem`表的`l_orderkey`为主键，数据天然有序",
+      "强制`lineitem`与`orders`使用合并连接，复用索引排序结果",
+      "避免`Sort`节点在`Partial HashAggregate`前的额外排序开销"
+    ],
+    "hint_combination": "/*+ MergeJoin(lineitem orders) NoSort(lineitem orders) NoSort(orders) */",
+    "expected_performance_benefit": "预计执行耗时下降25%-40%。核心收益来自避免`Sort`节点的内存排序开销，合并连接复用索引排序，提升聚合前数据准备效率"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "强制索引扫描替代全表扫描，提升小表过滤效率",
+    "core_optimization_points": [
+      "`nation`表仅25行，应始终使用索引扫描",
+      "`supplier`表`s_nationkey`有索引，应使用索引扫描而非全表扫描",
+      "强制`nation`与`supplier`连接使用索引扫描，避免`Parallel Seq Scan`",
+      "防止`supplier`表在`Parallel Seq Scan`中产生大量无效扫描"
+    ],
+    "hint_combination": "/*+ IndexScan(nation nation_pkey) IndexScan(supplier idx_supplier_nationkey) NoSeqScan(nation) NoSeqScan(supplier) */",
+    "expected_performance_benefit": "预计执行耗时下降20%-35%。核心收益来自避免`nation`和`supplier`表的全表扫描，提升小表连接效率"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "禁用Memoize缓存，避免缓存失效导致的性能下降",
+    "core_optimization_points": [
+      "`Memoize`节点显示`Hits: 21501`，`Misses: 789645`，缓存命中率极低",
+      "`Memoize`缓存失效导致`orders`表被重复扫描78万次",
+      "强制禁用`lineitem`与`orders`之间的`Memoize`缓存",
+      "避免因缓存管理开销导致的性能浪费"
+    ],
+    "hint_combination": "/*+ NoMemoize(lineitem orders) */",
+    "expected_performance_benefit": "预计执行耗时下降25%-40%。核心收益来自消除`Memoize`缓存的高Miss率带来的重复扫描，直接降低IO与CPU开销"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "优化连接方法，强制哈希连接并禁用嵌套循环，避免低效路径",
+    "core_optimization_points": [
+      "识别`supplier`与`partsupp`连接后结果集达10万行，嵌套循环代价过高",
+      "强制`supplier`与`partsupp`使用哈希连接，替代嵌套循环+索引扫描",
+      "强制`part`与`partsupp`使用哈希连接，避免`Nested Loop`的多次索引扫描",
+      "禁止所有`NestLoop`，防止优化器误选低效路径"
+    ],
+    "hint_combination": "/*+ HashJoin(supplier partsupp) HashJoin(part partsupp) NoNestLoop(supplier partsupp) NoNestLoop(part partsupp) NoNestLoop(lineitem orders) */",
+    "expected_performance_benefit": "预计执行耗时下降50%-70%。核心收益来自强制使用高效率的哈希连接，避免嵌套循环在大表连接中的指数级开销"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "提升`work_mem`以避免哈希/排序磁盘溢出，提升大操作性能",
+    "core_optimization_points": [
+      "`Hash`节点显示`Buckets: 131072`，`Batches: 1`，表明哈希表未溢出",
+      "但`Sort`节点使用`quicksort`，内存不足可能触发外部排序",
+      "提升`work_mem`至256MB，确保大哈希与大排序可在内存完成",
+      "避免因磁盘溢出导致的性能骤降"
+    ],
+    "hint_combination": "/*+ Set(work_mem '256MB') */",
+    "expected_performance_benefit": "预计执行耗时下降20%-35%。核心收益来自避免哈希与排序操作的磁盘溢出，提升大内存操作的执行效率"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "强制使用位图扫描处理多条件过滤，提升大表过滤效率",
+    "core_optimization_points": [
+      "`part`表的`p_name LIKE '%green%'`为模糊匹配，适合位图扫描",
+      "`lineitem`表的`l_partkey`与`l_suppkey`有索引，适合位图扫描",
+      "强制`part`与`lineitem`使用位图扫描，避免全表扫描",
+      "提升`part`表的过滤效率，减少后续连接数据量"
+    ],
+    "hint_combination": "/*+ BitmapScan(part idx_part_brand) BitmapScan(lineitem idx_lineitem_partkey) NoSeqScan(part) NoSeqScan(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时下降30%-45%。核心收益来自位图扫描减少随机IO，提升多条件过滤效率"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "调整连接顺序，将大表连接推迟，控制中间结果集规模",
+    "core_optimization_points": [
+      "将`lineitem`与`orders`的连接推迟到最后，确保其输入为最小中间结果",
+      "先连接`nation`→`supplier`→`partsupp`→`part`，生成小结果集",
+      "再连接`lineitem`与`orders`，避免大表连接过早发生",
+      "防止`lineitem`与`orders`在未过滤时即被千万次扫描"
+    ],
+    "hint_combination": "/*+ Leading( (nation (supplier (part partsupp))) (lineitem orders) ) */",
+    "expected_performance_benefit": "预计执行耗时下降45%-65%。核心收益来自延迟大表连接，控制中间结果集规模，避免早期连接膨胀"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "强制使用哈希连接并提升并行度，加速大表连接与扫描",
+    "core_optimization_points": [
+      "`supplier`与`partsupp`连接结果集大，应使用哈希连接",
+      "`part`与`partsupp`连接结果集大，应使用哈希连接",
+      "将`supplier`与`partsupp`连接的并行度提升至6",
+      "将`part`与`partsupp`连接的并行度提升至4"
+    ],
+    "hint_combination": "/*+ HashJoin(supplier partsupp) HashJoin(part partsupp) Parallel(supplier 6) Parallel(partsupp 4) */",
+    "expected_performance_benefit": "预计执行耗时下降50%-70%。核心收益来自并行加速哈希连接，显著缩短大表连接时间"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "禁用不必要的并行扫描，避免小表并行开销",
+    "core_optimization_points": [
+      "`nation`表仅25行，无需并行扫描",
+      "`supplier`表虽有索引，但数据量小，无需并行",
+      "强制禁用`nation`与`supplier`的并行扫描",
+      "避免并行启动开销大于收益"
+    ],
+    "hint_combination": "/*+ Parallel(nation 0) Parallel(supplier 0) */",
+    "expected_performance_benefit": "预计执行耗时下降5%-15%。核心收益来自避免小表并行的启动开销，提升整体执行效率"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "优化连接方法，强制合并连接以复用索引排序，减少排序开销",
+    "core_optimization_points": [
+      "`orders`表的`o_orderdate`有索引，数据天然有序",
+      "`lineitem`表的`l_orderkey`有索引，数据天然有序",
+      "强制`lineitem`与`orders`使用合并连接，复用索引排序",
+      "避免`Sort`节点的额外排序开销"
+    ],
+    "hint_combination": "/*+ MergeJoin(lineitem orders) NoSort(lineitem orders) */",
+    "expected_performance_benefit": "预计执行耗时下降25%-40%。核心收益来自复用索引排序，避免额外排序开销"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "校正优化器对`lineitem`表连接结果集的严重估计偏差",
+    "core_optimization_points": [
+      "`lineitem`表实际连接后行数为815,403，但优化器估计仅441,679",
+      "实际行数是估计值的1.8倍，严重低估",
+      "通过`Rows` Hint将`lineitem`与`orders`连接结果集乘以1.8",
+      "防止后续连接因估计偏差而选择错误路径"
+    ],
+    "hint_combination": "/*+ Rows(lineitem orders *1.8) */",
+    "expected_performance_benefit": "预计执行耗时下降30%-50%。核心收益来自修正优化器对`lineitem`连接结果集的严重低估，避免因估计过低导致的嵌套循环选择"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "强制使用索引扫描并提升`random_page_cost`以匹配SSD性能",
+    "core_optimization_points": [
+      "系统为SSD存储，`random_page_cost`应设为1.1~2.0",
+      "当前默认值为4.0，导致优化器误判索引扫描代价过高",
+      "强制`random_page_cost`为1.5，使索引扫描更具吸引力",
+      "提升`part`与`partsupp`连接的索引扫描效率"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.5) IndexScan(part idx_part_brand) IndexScan(partsupp partsupp_pkey) */",
+    "expected_performance_benefit": "预计执行耗时下降20%-35%。核心收益来自降低索引扫描的代价估计，使优化器更倾向于使用索引扫描"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "优化连接顺序与方法，强制哈希连接并提升并行度，实现综合性能提升",
+    "core_optimization_points": [
+      "将`nation`作为最外层驱动表，生成最小连接起点",
+      "强制`supplier`与`partsupp`使用哈希连接，避免嵌套循环",
+      "将`lineitem`表并行度提升至8，加速大表扫描",
+      "确保所有大表连接均使用哈希连接，避免低效路径"
+    ],
+    "hint_combination": "/*+ Leading( (nation (supplier (part partsupp))) (lineitem orders) ) HashJoin(supplier partsupp) HashJoin(part partsupp) HashJoin(lineitem orders) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时下降55%-75%。核心收益来自综合优化连接顺序、连接方法与并行度，实现全链路性能提升"
+  }
+]
+```

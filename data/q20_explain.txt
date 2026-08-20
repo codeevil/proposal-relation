@@ -1,0 +1,38 @@
+Sort  (cost=6652410.33..6652413.02 rows=1077 width=51) (actual time=7671.751..7671.856 rows=1804 loops=1)
+  Sort Key: supplier.s_name
+  Sort Method: quicksort  Memory: 216kB
+  ->  Hash Semi Join  (cost=6649956.13..6652356.08 rows=1077 width=51) (actual time=7659.062..7665.675 rows=1804 loops=1)
+        Hash Cond: (supplier.s_suppkey = partsupp.ps_suppkey)
+        ->  Nested Loop  (cost=47.29..2404.57 rows=4000 width=55) (actual time=0.935..6.281 rows=4054 loops=1)
+              ->  Seq Scan on nation  (cost=0.00..1.31 rows=1 width=4) (actual time=0.024..0.032 rows=1 loops=1)
+                    Filter: (n_name = 'CANADA'::bpchar)
+                    Rows Removed by Filter: 24
+              ->  Bitmap Heap Scan on supplier  (cost=47.29..2363.25 rows=4000 width=59) (actual time=0.906..5.697 rows=4054 loops=1)
+                    Recheck Cond: (s_nationkey = nation.n_nationkey)
+                    Heap Blocks: exact=1884
+                    ->  Bitmap Index Scan on idx_supplier_nationkey  (cost=0.00..46.29 rows=4000 width=0) (actual time=0.587..0.588 rows=4054 loops=1)
+                          Index Cond: (s_nationkey = nation.n_nationkey)
+        ->  Hash  (cost=6649572.15..6649572.15 rows=26935 width=4) (actual time=7657.974..7657.980 rows=58655 loops=1)
+              Buckets: 65536 (originally 32768)  Batches: 1 (originally 1)  Memory Usage: 2575kB
+              ->  Nested Loop  (cost=0.43..6649572.15 rows=26935 width=4) (actual time=0.631..7637.102 rows=58655 loops=1)
+                    ->  Seq Scan on part  (cost=0.00..65961.89 rows=20202 width=4) (actual time=0.010..333.771 rows=21551 loops=1)
+                          Filter: ((p_name)::text ~~ 'forest%'::text)
+                          Rows Removed by Filter: 1978449
+                    ->  Index Scan using partsupp_pkey on partsupp  (cost=0.43..325.83 rows=6 width=8) (actual time=0.130..0.338 rows=3 loops=21551)
+                          Index Cond: (ps_partkey = part.p_partkey)
+                          Filter: ((ps_availqty)::numeric > (SubPlan 1))
+                          Rows Removed by Filter: 1
+                          SubPlan 1
+                            ->  Aggregate  (cost=17.94..17.95 rows=1 width=32) (actual time=0.081..0.081 rows=1 loops=86204)
+                                  ->  Bitmap Heap Scan on lineitem  (cost=13.91..17.93 rows=1 width=5) (actual time=0.071..0.080 rows=1 loops=86204)
+                                        Recheck Cond: ((l_partkey = partsupp.ps_partkey) AND (l_suppkey = partsupp.ps_suppkey))
+                                        Filter: ((l_shipdate >= '1994-01-01'::date) AND (l_shipdate < '1995-01-01'::date))
+                                        Rows Removed by Filter: 6
+                                        Heap Blocks: exact=645478
+                                        ->  BitmapAnd  (cost=13.91..13.91 rows=1 width=0) (actual time=0.057..0.057 rows=0 loops=86204)
+                                              ->  Bitmap Index Scan on idx_lineitem_partkey  (cost=0.00..4.67 rows=30 width=0) (actual time=0.004..0.004 rows=30 loops=86204)
+                                                    Index Cond: (l_partkey = partsupp.ps_partkey)
+                                              ->  Bitmap Index Scan on idx_lineitem_suppkey  (cost=0.00..9.00 rows=591 width=0) (actual time=0.051..0.051 rows=600 loops=86204)
+                                                    Index Cond: (l_suppkey = partsupp.ps_suppkey)
+Planning Time: 2.089 ms
+Execution Time: 7672.216 ms

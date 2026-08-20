@@ -1,0 +1,26 @@
+Finalize GroupAggregate  (cost=387854.10..387886.35 rows=5 width=24) (actual time=1084.161..1251.080 rows=5 loops=1)
+  Group Key: orders.o_orderpriority
+  ->  Gather Merge  (cost=387854.10..387886.20 rows=20 width=24) (actual time=1077.695..1251.047 rows=25 loops=1)
+        Workers Planned: 4
+        Workers Launched: 4
+        ->  Partial GroupAggregate  (cost=386854.05..386883.76 rows=5 width=24) (actual time=1055.400..1073.139 rows=5 loops=5)
+              Group Key: orders.o_orderpriority
+              ->  Sort  (cost=386854.05..386863.93 rows=3955 width=16) (actual time=1052.463..1058.864 rows=105208 loops=5)
+                    Sort Key: orders.o_orderpriority
+                    Sort Method: quicksort  Memory: 8659kB
+                    Worker 0:  Sort Method: quicksort  Memory: 8805kB
+                    Worker 1:  Sort Method: quicksort  Memory: 8838kB
+                    Worker 2:  Sort Method: quicksort  Memory: 8910kB
+                    Worker 3:  Sort Method: quicksort  Memory: 8918kB
+                    ->  Nested Loop Semi Join  (cost=8115.89..386617.74 rows=3955 width=16) (actual time=132.392..1011.189 rows=105208 loops=5)
+                          ->  Parallel Bitmap Heap Scan on orders  (cost=8115.33..271252.78 rows=148363 width=20) (actual time=132.228..316.302 rows=114734 loops=5)
+                                Recheck Cond: ((o_orderdate >= '1993-07-01'::date) AND (o_orderdate < '1993-10-01'::date))
+                                Heap Blocks: exact=45229
+                                ->  Bitmap Index Scan on idx_orders_orderdate  (cost=0.00..7966.97 rows=593453 width=0) (actual time=81.130..81.131 rows=573671 loops=1)
+                                      Index Cond: ((o_orderdate >= '1993-07-01'::date) AND (o_orderdate < '1993-10-01'::date))
+                          ->  Index Scan using idx_lineitem_orderkey on lineitem  (cost=0.56..10.90 rows=50 width=4) (actual time=0.006..0.006 rows=1 loops=573671)
+                                Index Cond: (l_orderkey = orders.o_orderkey)
+                                Filter: (l_commitdate < l_receiptdate)
+                                Rows Removed by Filter: 1
+Planning Time: 1.502 ms
+Execution Time: 1252.175 ms

@@ -1,0 +1,155 @@
+{
+  "sql_info": {
+    "original_sql": "",
+    "schema": "public",
+    "extracted_tables": [
+      {
+        "table_name": "partsupp",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "part",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "supplier",
+        "schema_name": "public",
+        "alias": null
+      }
+    ]
+  },
+  "tables": {
+    "public.partsupp": {
+      "table_metadata": {
+        "relname": "partsupp",
+        "relnamespace": "public",
+        "reltuples": 7999655,
+        "relpages": 174386,
+        "relallvisible": 174386
+      },
+      "indexes": [
+        {
+          "index_name": "partsupp_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "ps_partkey",
+            "ps_suppkey"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "ps_partkey": {
+          "attname": "ps_partkey",
+          "n_distinct": 458216.0,
+          "null_frac": 0.0
+        },
+        "ps_suppkey": {
+          "attname": "ps_suppkey",
+          "n_distinct": 99605.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.part": {
+      "table_metadata": {
+        "relname": "part",
+        "relnamespace": "public",
+        "reltuples": 1999991,
+        "relpages": 40962,
+        "relallvisible": 40962
+      },
+      "indexes": [
+        {
+          "index_name": "idx_part_brand",
+          "index_type": "btree",
+          "index_columns": [
+            "p_brand"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "part_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "p_partkey"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "p_brand": {
+          "attname": "p_brand",
+          "n_distinct": 25.0,
+          "null_frac": 0.0
+        },
+        "p_partkey": {
+          "attname": "p_partkey",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "p_size": {
+          "attname": "p_size",
+          "n_distinct": 50.0,
+          "null_frac": 0.0
+        },
+        "p_type": {
+          "attname": "p_type",
+          "n_distinct": 150.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.supplier": {
+      "table_metadata": {
+        "relname": "supplier",
+        "relnamespace": "public",
+        "reltuples": 100000,
+        "relpages": 2216,
+        "relallvisible": 2216
+      },
+      "indexes": [
+        {
+          "index_name": "idx_supplier_nationkey",
+          "index_type": "btree",
+          "index_columns": [
+            "s_nationkey"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "supplier_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "s_suppkey"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "s_comment": {
+          "attname": "s_comment",
+          "n_distinct": -0.99962,
+          "null_frac": 0.0
+        },
+        "s_suppkey": {
+          "attname": "s_suppkey",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        }
+      }
+    }
+  }
+}

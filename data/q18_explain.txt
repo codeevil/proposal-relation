@@ -1,0 +1,42 @@
+Limit  (cost=2802161.51..2802161.76 rows=100 width=71) (actual time=62442.644..62442.830 rows=100 loops=1)
+  ->  Sort  (cost=2802161.51..2803494.28 rows=533106 width=71) (actual time=62442.642..62442.820 rows=100 loops=1)
+        Sort Key: orders.o_totalprice DESC, orders.o_orderdate
+        Sort Method: top-N heapsort  Memory: 38kB
+        ->  GroupAggregate  (cost=1998092.73..2781786.58 rows=533106 width=71) (actual time=61909.004..62441.880 rows=624 loops=1)
+              Group Key: customer.c_custkey, orders.o_orderkey
+              ->  Incremental Sort  (cost=1998092.73..2771124.46 rows=533106 width=44) (actual time=61908.965..62440.160 rows=4368 loops=1)
+                    Sort Key: customer.c_custkey, orders.o_orderkey
+                    Presorted Key: customer.c_custkey
+                    Full-sort Groups: 125  Sort Method: quicksort  Average Memory: 28kB  Peak Memory: 28kB
+                    ->  Nested Loop  (cost=1998091.31..2747134.69 rows=533106 width=44) (actual time=61905.885..62438.332 rows=4368 loops=1)
+                          ->  Merge Join  (cost=1998090.75..2078625.81 rows=133296 width=43) (actual time=61905.783..62422.991 rows=624 loops=1)
+                                Merge Cond: (customer.c_custkey = orders.o_custkey)
+                                ->  Index Scan using customer_pkey on customer  (cost=0.43..74793.89 rows=1499964 width=23) (actual time=0.040..381.317 rows=1499744 loops=1)
+                                ->  Sort  (cost=1998086.71..1998419.95 rows=133296 width=24) (actual time=61904.146..61904.452 rows=624 loops=1)
+                                      Sort Key: orders.o_custkey
+                                      Sort Method: quicksort  Memory: 68kB
+                                      ->  Hash Join  (cost=1536455.28..1986740.37 rows=133296 width=24) (actual time=56614.542..61902.546 rows=624 loops=1)
+                                            Hash Cond: (orders.o_orderkey = lineitem_1.l_orderkey)
+                                            ->  Seq Scan on orders  (cost=0.00..410910.48 rows=14999848 width=20) (actual time=0.033..1719.689 rows=15000000 loops=1)
+                                            ->  Hash  (cost=1534789.08..1534789.08 rows=133296 width=4) (actual time=56611.772..56611.923 rows=624 loops=1)
+                                                  Buckets: 262144  Batches: 1  Memory Usage: 2070kB
+                                                  ->  Finalize HashAggregate  (cost=1527457.78..1533456.12 rows=133296 width=4) (actual time=30444.565..56603.977 rows=624 loops=1)
+                                                        Group Key: lineitem_1.l_orderkey
+                                                        Filter: (sum(lineitem_1.l_quantity) > '300'::numeric)
+                                                        Batches: 133  Memory Usage: 131353kB  Disk Usage: 1266000kB
+                                                        Rows Removed by Filter: 14999376
+                                                        ->  Gather  (cost=1350506.90..1515461.11 rows=1599556 width=36) (actual time=9337.851..19176.822 rows=15017298 loops=1)
+                                                              Workers Planned: 4
+                                                              Workers Launched: 4
+                                                              ->  Partial HashAggregate  (cost=1349506.90..1354505.51 rows=399889 width=36) (actual time=9322.577..17545.811 rows=3003460 loops=5)
+                                                                    Group Key: lineitem_1.l_orderkey
+                                                                    Batches: 25  Memory Usage: 131161kB  Disk Usage: 393032kB
+                                                                    Worker 0:  Batches: 21  Memory Usage: 131129kB  Disk Usage: 410384kB
+                                                                    Worker 1:  Batches: 21  Memory Usage: 131129kB  Disk Usage: 396936kB
+                                                                    Worker 2:  Batches: 25  Memory Usage: 131161kB  Disk Usage: 387936kB
+                                                                    Worker 3:  Batches: 21  Memory Usage: 131129kB  Disk Usage: 376080kB
+                                                                    ->  Parallel Seq Scan on lineitem lineitem_1  (cost=0.00..1274518.60 rows=14997660 width=9) (actual time=0.037..1889.164 rows=11997210 loops=5)
+                          ->  Index Scan using idx_lineitem_orderkey on lineitem  (cost=0.56..3.52 rows=150 width=9) (actual time=0.021..0.023 rows=7 loops=624)
+                                Index Cond: (l_orderkey = orders.o_orderkey)
+Planning Time: 2.385 ms
+Execution Time: 62833.913 ms

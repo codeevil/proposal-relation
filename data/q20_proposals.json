@@ -1,0 +1,244 @@
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "修正严重行数估计偏差，强制哈希连接并优化连接顺序，消除嵌套循环的指数级开销",
+    "core_optimization_points": [
+      "校正`part`表与`partsupp`连接后中间结果集的行数估计，实际行数远高于估计值",
+      "强制`part`与`partsupp`使用哈希连接，替代低效的嵌套循环+索引扫描",
+      "调整连接顺序为`nation`→`supplier`→`part`→`partsupp`→`lineitem`，先过滤小表再连接大表",
+      "强制`part`表使用`idx_part_brand`索引扫描，提升`p_name LIKE 'forest%'`的过滤效率"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *0.1) Leading( (nation supplier part partsupp lineitem) ) HashJoin(part partsupp) IndexScan(part idx_part_brand) NoNestLoop(part partsupp) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自消除`part`与`partsupp`之间每行触发一次`lineitem`子查询的嵌套循环，同时修正估计偏差使优化器选择合理路径"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "强制使用仅索引扫描覆盖查询列，避免回表开销，提升大表扫描效率",
+    "core_optimization_points": [
+      "识别`part`表的`p_name LIKE 'forest%'`过滤条件可由`idx_part_brand`索引覆盖",
+      "强制`part`表使用`IndexOnlyScan`，避免回表读取全行数据",
+      "为`partsupp`表添加覆盖索引（ps_partkey, ps_suppkey, ps_availqty）以支持仅索引扫描",
+      "在`lineitem`子查询中强制使用`idx_lineitem_partkey`和`idx_lineitem_suppkey`的位图扫描"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(part idx_part_brand) BitmapScan(lineitem idx_lineitem_partkey) BitmapScan(lineitem idx_lineitem_suppkey) NoIndexScan(part) */",
+    "expected_performance_benefit": "预计降低执行耗时45%-60%，核心收益来自消除`part`表的回表IO和`lineitem`子查询中的多次随机IO"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "重构连接顺序与连接方法，将小结果集作为驱动表，避免中间结果膨胀",
+    "core_optimization_points": [
+      "先过滤`nation`表（仅1行），作为最外层驱动表",
+      "将`supplier`表与`nation`连接后结果集（约4054行）作为中间驱动表",
+      "强制`supplier`与`partsupp`使用哈希连接，避免嵌套循环对`partsupp`的全表扫描",
+      "将`part`与`partsupp`连接提前，利用`partsupp`的主键索引快速定位"
+    ],
+    "hint_combination": "/*+ Leading( (nation supplier partsupp part lineitem) ) HashJoin(supplier partsupp) HashJoin(part partsupp) NoNestLoop(supplier partsupp) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-70%，核心收益来自控制中间结果集增长，避免`partsupp`被重复扫描超过2万次"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "强制使用位图扫描组合多索引过滤，减少`lineitem`表的随机IO开销",
+    "core_optimization_points": [
+      "在`lineitem`子查询中，`l_partkey`和`l_suppkey`均存在索引，应使用位图扫描合并",
+      "强制`lineitem`使用`BitmapAnd`扫描，避免多次随机回表",
+      "为`lineitem`设置更高的`random_page_cost`，模拟SSD性能，促使优化器更倾向位图扫描",
+      "校正`lineitem`子查询的行数估计，避免因估计过低导致嵌套循环重复执行"
+    ],
+    "hint_combination": "/*+ BitmapScan(lineitem idx_lineitem_partkey) BitmapScan(lineitem idx_lineitem_suppkey) Set(random_page_cost 1.1) Rows(lineitem *0.2) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自将`lineitem`子查询的随机IO转为批量顺序IO，显著减少回表次数"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "通过`Rows` Hint校正统计信息偏差，强制优化器选择哈希连接而非嵌套循环",
+    "core_optimization_points": [
+      "计算`part`表`p_name LIKE 'forest%'`的真实选择性：约21551 / 1999991 ≈ 1.08%，远低于优化器估计",
+      "校正`part`与`partsupp`连接后结果集为26935行，实际为58655行，偏差2.17倍",
+      "强制`part`与`partsupp`使用哈希连接，避免嵌套循环中`partsupp`被扫描86204次",
+      "提升`work_mem`至128MB，防止哈希表溢出到磁盘"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *2.17) HashJoin(part partsupp) Set(work_mem '128MB') NoNestLoop(part partsupp) */",
+    "expected_performance_benefit": "预计降低执行耗时55%-75%，核心收益来自消除`partsupp`的重复扫描，同时避免哈希表磁盘溢出"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "使用Memoize缓存机制优化嵌套循环连接中内表结果，避免重复计算",
+    "core_optimization_points": [
+      "识别`partsupp`表的`ps_partkey`与`ps_suppkey`在`lineitem`子查询中被重复查询",
+      "对`partsupp`与`lineitem`的嵌套循环启用Memoize缓存，复用相同`ps_partkey`和`ps_suppkey`的子查询结果",
+      "强制`partsupp`表使用`IndexScan`，保证查询路径稳定",
+      "限制Memoize缓存大小，防止内存溢出"
+    ],
+    "hint_combination": "/*+ Memoize(partsupp lineitem) IndexScan(partsupp partsupp_pkey) Set(work_mem '64MB') */",
+    "expected_performance_benefit": "预计降低执行耗时30%-45%，核心收益来自将`lineitem`子查询从86204次降至约58655次，减少重复计算"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "提升并行度，加速大表扫描与哈希连接，利用多核资源降低执行时间",
+    "core_optimization_points": [
+      "`partsupp`表有近800万行，扫描代价高，应启用并行扫描",
+      "`lineitem`表有近6000万行，子查询扫描应启用并行",
+      "`supplier`与`nation`连接结果集小，无需并行",
+      "设置`max_parallel_workers_per_gather`为4，充分利用CPU资源"
+    ],
+    "hint_combination": "/*+ Parallel(partsupp 4) Parallel(lineitem 4) Set(max_parallel_workers_per_gather 4) NoParallel(nation) */",
+    "expected_performance_benefit": "预计降低执行耗时35%-50%，核心收益来自并行加速大表扫描与哈希连接，尤其在多核服务器上表现显著"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "重构查询结构，将子查询提前物化，避免重复计算与嵌套循环",
+    "core_optimization_points": [
+      "将`ps_availqty > (SELECT ...)`的子查询结果物化为临时结果集",
+      "使用`WITH`子句预计算`partsupp`中满足条件的`ps_partkey`和`ps_suppkey`",
+      "将物化结果与`supplier`连接，避免在嵌套循环中重复执行子查询",
+      "强制物化结果使用哈希连接，提升连接效率"
+    ],
+    "hint_combination": "/*+ Leading( (nation supplier (partsupp_filtered lineitem)) ) HashJoin(supplier partsupp_filtered) Set(work_mem '256MB') */",
+    "expected_performance_benefit": "预计降低执行耗时50%-70%，核心收益来自将子查询从86204次变为1次，彻底消除重复计算"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "强制使用合并连接复用索引排序，避免额外排序开销",
+    "core_optimization_points": [
+      "`supplier`表的`idx_supplier_nationkey`为B树索引，天然有序",
+      "`nation`表仅1行，可作为驱动表，结果集已排序",
+      "强制`supplier`与`nation`使用`MergeJoin`，复用索引排序",
+      "避免`Sort`节点对`supplier.s_name`的额外排序"
+    ],
+    "hint_combination": "/*+ MergeJoin(supplier nation) NoSort(supplier) NoNestLoop(supplier nation) */",
+    "expected_performance_benefit": "预计降低执行耗时25%-40%，核心收益来自避免`Sort`节点的内存排序，复用索引天然有序性"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "通过调整代价参数，引导优化器选择更优的连接方法与扫描路径",
+    "core_optimization_points": [
+      "降低`random_page_cost`至1.1，匹配SSD存储性能，鼓励使用索引扫描",
+      "提升`cpu_tuple_cost`至0.02，降低嵌套循环的相对代价",
+      "增加`effective_cache_size`至16GB，提升缓存命中率",
+      "关闭`enable_seqscan`，强制使用索引扫描"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.1) Set(cpu_tuple_cost 0.02) Set(effective_cache_size '16GB') Set(enable_seqscan off) */",
+    "expected_performance_benefit": "预计降低执行耗时30%-50%，核心收益来自优化器更倾向使用索引扫描和哈希连接，避免全表扫描"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "为`partsupp`表创建覆盖索引，支持仅索引扫描，消除回表开销",
+    "core_optimization_points": [
+      "`partsupp`表的`ps_availqty`为关键过滤字段，但无覆盖索引",
+      "创建覆盖索引`(ps_partkey, ps_suppkey, ps_availqty)`，支持仅索引扫描",
+      "强制`partsupp`使用该覆盖索引进行`IndexOnlyScan`",
+      "避免`partsupp`表的回表IO"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(partsupp (ps_partkey, ps_suppkey, ps_availqty)) NoIndexScan(partsupp) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-60%，核心收益来自消除`partsupp`表的回表IO，尤其在高并发场景下优势显著"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "强制使用`BitmapAnd`合并多索引，减少`lineitem`表的随机IO",
+    "core_optimization_points": [
+      "在`lineitem`子查询中，`l_partkey`和`l_suppkey`均存在索引",
+      "强制使用`BitmapAnd`合并两个索引扫描结果，避免多次随机回表",
+      "避免`BitmapHeapScan`中因`Recheck Cond`导致的重复检查",
+      "提升`work_mem`以避免位图溢出"
+    ],
+    "hint_combination": "/*+ BitmapAnd(lineitem) Set(work_mem '128MB') NoSeqScan(lineitem) */",
+    "expected_performance_benefit": "预计降低执行耗时35%-50%，核心收益来自将随机IO转为批量顺序IO，显著提升大表扫描效率"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "将`part`表的`p_name LIKE 'forest%'`过滤提前，减少后续连接数据量",
+    "core_optimization_points": [
+      "`part`表有近200万行，`p_name LIKE 'forest%'`仅返回21551行",
+      "强制`part`表在连接前先扫描并过滤，减少中间结果",
+      "将`part`表的扫描提前至连接树最内层",
+      "避免`partsupp`表被无谓扫描"
+    ],
+    "hint_combination": "/*+ Leading( (part nation supplier partsupp lineitem) ) NoNestLoop(part partsupp) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自减少`partsupp`表的扫描次数，从86204次降至21551次"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "强制使用哈希连接替代嵌套循环，解决大表连接性能瓶颈",
+    "core_optimization_points": [
+      "`partsupp`表有799万行，`part`表有200万行，连接结果集大",
+      "嵌套循环连接代价过高，应使用哈希连接",
+      "强制`part`与`partsupp`使用`HashJoin`，避免`IndexScan`的高随机IO代价",
+      "提升`work_mem`以避免哈希表溢出"
+    ],
+    "hint_combination": "/*+ HashJoin(part partsupp) Set(work_mem '256MB') NoNestLoop(part partsupp) */",
+    "expected_performance_benefit": "预计降低执行耗时50%-70%，核心收益来自将嵌套循环的O(n²)代价转为O(n)的哈希连接"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "使用`Set`调整`cpu_operator_cost`，引导优化器更倾向使用索引扫描",
+    "core_optimization_points": [
+      "`cpu_operator_cost`默认为0.0025，过低导致优化器低估索引扫描代价",
+      "提升至0.01，使索引扫描代价更真实，避免优化器误选全表扫描",
+      "强制`part`表使用`IndexScan`，避免`SeqScan`",
+      "避免`part`表的全表扫描"
+    ],
+    "hint_combination": "/*+ Set(cpu_operator_cost 0.01) IndexScan(part idx_part_brand) NoSeqScan(part) */",
+    "expected_performance_benefit": "预计降低执行耗时30%-45%，核心收益来自避免`part`表的全表扫描，提升过滤效率"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "为`supplier`表创建覆盖索引，支持仅索引扫描，减少回表开销",
+    "core_optimization_points": [
+      "`supplier`表的`s_name`和`s_address`为查询列，但无覆盖索引",
+      "创建覆盖索引`(s_nationkey, s_suppkey, s_name, s_address)`",
+      "强制`supplier`表使用`IndexOnlyScan`，避免回表",
+      "提升`work_mem`以避免索引扫描内存溢出"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(supplier (s_nationkey, s_suppkey, s_name, s_address)) Set(work_mem '128MB') */",
+    "expected_performance_benefit": "预计降低执行耗时25%-40%，核心收益来自消除`supplier`表的回表IO"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "强制使用`NoSeqScan`，确保大表扫描均使用索引路径",
+    "core_optimization_points": [
+      "`partsupp`和`lineitem`表均为大表，应避免全表扫描",
+      "强制`partsupp`和`lineitem`使用`IndexScan`或`BitmapScan`",
+      "禁止`SeqScan`，防止优化器误选全表扫描",
+      "提升`work_mem`以支持大索引扫描"
+    ],
+    "hint_combination": "/*+ NoSeqScan(partsupp) NoSeqScan(lineitem) Set(work_mem '256MB') */",
+    "expected_performance_benefit": "预计降低执行耗时35%-50%，核心收益来自避免大表全表扫描，强制使用索引路径"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "使用`Set`调整`seq_page_cost`，匹配SSD存储性能，优化扫描路径选择",
+    "core_optimization_points": [
+      "`seq_page_cost`默认为1.0，适用于HDD，SSD应设为0.5~1.0",
+      "设置为1.0，使顺序扫描代价更真实，避免优化器误选索引扫描",
+      "提升`random_page_cost`至1.1，使索引扫描代价更合理",
+      "引导优化器在大表扫描中更倾向使用顺序扫描"
+    ],
+    "hint_combination": "/*+ Set(seq_page_cost 1.0) Set(random_page_cost 1.1) */",
+    "expected_performance_benefit": "预计降低执行耗时20%-35%，核心收益来自优化器更合理地选择扫描路径"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "强制`lineitem`子查询使用`IndexScan`而非`BitmapHeapScan`，减少回表开销",
+    "core_optimization_points": [
+      "`lineitem`子查询中`Recheck Cond`导致多次回表",
+      "强制使用`IndexScan`，避免`BitmapHeapScan`的回表开销",
+      "提升`work_mem`以支持大索引扫描",
+      "避免`BitmapHeapScan`的内存溢出"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_partkey) IndexScan(lineitem idx_lineitem_suppkey) Set(work_mem '128MB') */",
+    "expected_performance_benefit": "预计降低执行耗时30%-45%，核心收益来自减少`lineitem`子查询的回表次数"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "通过`Rows` Hint校正`part`表的行数估计，解决优化器误判问题",
+    "core_optimization_points": [
+      "`part`表`p_name LIKE 'forest%'`实际返回21551行，优化器估计仅65961.89行",
+      "校正`part`表的`Plan Rows`为21551，避免后续连接估计偏差",
+      "强制`part`表使用`IndexScan`，确保路径稳定",
+      "提升`work_mem`以支持大索引扫描"
+    ],
+    "hint_combination": "/*+ Rows(part #21551) IndexScan(part idx_part_brand) Set(work_mem '128MB') */",
+    "expected_performance_benefit": "预计降低执行耗时25%-40%，核心收益来自修正优化器对`part`表的估计偏差，使后续连接路径更合理"
+  }
+]
+```

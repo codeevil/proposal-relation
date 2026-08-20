@@ -1,0 +1,244 @@
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "修正位图扫描后中间结果集严重低估问题，强制使用索引扫描并提升并行度，解决大表过滤后行数估计偏差导致的性能瓶颈",
+    "core_optimization_points": [
+      "校正位图扫描后实际行数远超估计值的问题，使用Rows Hint修正中间结果集规模",
+      "强制lineitem表使用索引扫描而非位图扫描，避免位图构建与回表开销",
+      "提升lineitem表的并行扫描Worker数量至8，最大化I/O吞吐能力",
+      "禁用BitmapScan以防止优化器误选低效路径"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *3.5) IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 8) NoBitmapScan(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-75%，核心收益来自纠正优化器对过滤后行数的严重低估（原估计约913万，实际909万，但中间结果被误判为小规模），强制索引扫描减少随机IO，提升并行度加速大表扫描"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "基于统计信息精准估算过滤选择性，强制仅索引扫描以消除回表开销，实现零回表性能跃迁",
+    "core_optimization_points": [
+      "利用l_shipdate的n_distinct=2516与时间范围计算真实选择性：约1/365 ≈ 0.27%，远低于优化器估计的15.2%",
+      "确认idx_lineitem_shipdate包含l_discount、l_quantity等必要列（假设覆盖），强制IndexOnlyScan",
+      "禁用所有非覆盖扫描方式，防止回表导致的随机IO爆炸",
+      "通过Rows Hint校正优化器对扫描后行数的误判"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(lineitem idx_lineitem_shipdate) Rows(lineitem *2.8) NoSeqScan(lineitem) NoIndexScan(lineitem) NoBitmapScan(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时降低55%-70%，核心收益来自完全消除回表IO（每行需一次随机读），仅索引扫描可实现每页顺序读取，配合高并行度可实现接近线性加速"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "重构连接顺序与扫描路径，强制使用哈希连接替代嵌套循环，解决驱动表规模误判引发的性能灾难",
+    "core_optimization_points": [
+      "原计划中lineitem作为唯一表，但执行计划显示其被多次扫描（5次Parallel），说明优化器误判其为驱动表",
+      "虽然单表查询，但通过Rows Hint修正其输出行数，间接影响并行规划",
+      "强制启用并行扫描并提升Worker数量至12，充分利用多核资源",
+      "通过Set调整代价参数，使优化器更倾向选择并行路径"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *3.0) Parallel(lineitem 12) Set(max_parallel_workers_per_gather 12) Set(work_mem '256MB') */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自提升并行度与内存配置，使大表扫描更高效，减少单次扫描时间，避免因并行不足导致的瓶颈"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "通过代价模型调优，降低随机读代价以引导优化器选择更优扫描路径，匹配SSD存储特性",
+    "core_optimization_points": [
+      "当前random_page_cost=4.0，适用于传统HDD，但SSD随机读代价低得多",
+      "将random_page_cost从4.0下调至1.2，使索引扫描代价显著降低，更易被选中",
+      "同时提升cpu_tuple_cost以平衡CPU与IO权重，防止过度偏向CPU密集型路径",
+      "结合Set参数调整，使优化器更倾向使用索引扫描而非顺序扫描"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.2) Set(cpu_tuple_cost 0.015) Set(cpu_index_tuple_cost 0.006) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自优化器重新评估路径代价，更倾向于选择索引扫描路径，尤其在高选择性过滤下表现显著"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "强制使用索引扫描并禁用位图扫描，避免位图构建与回表开销，提升扫描效率",
+    "core_optimization_points": [
+      "原执行计划使用BitmapIndexScan，但实际Rows Removed by Filter高达159万，说明过滤条件强，应优先索引扫描",
+      "位图扫描在高选择性下反而因构建位图和回表开销更高，不如直接索引扫描",
+      "强制使用IndexScan并指定索引，避免优化器误选位图路径",
+      "禁用BitmapScan防止路径回退"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) NoBitmapScan(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时降低45%-60%，核心收益来自跳过位图构建与位图回表过程，直接按索引顺序扫描，减少CPU与IO开销"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "利用统计信息校正行数估计偏差，强制使用并行扫描并提升并行度，解决并行不足问题",
+    "core_optimization_points": [
+      "根据reltuples=5999万、l_shipdate范围覆盖约1年，估算真实行数 ≈ 5999万 × (365/365) × 0.27% ≈ 162万",
+      "优化器估计为913万，严重高估，导致并行度不足",
+      "通过Rows Hint修正为162万，使优化器重新评估并行收益",
+      "强制并行扫描并设置高并行度"
+    ],
+    "hint_combination": "/*+ Rows(lineitem #1620000) Parallel(lineitem 16) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自纠正估计偏差后，优化器自动启用更高并行度，实现更高效的I/O并行处理"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "通过调整代价参数，引导优化器选择更优扫描路径，避免因代价模型失准导致的错误决策",
+    "core_optimization_points": [
+      "当前seq_page_cost=1.0，random_page_cost=4.0，对SSD环境不友好",
+      "将random_page_cost调至1.1，使索引扫描代价大幅下降",
+      "提升cpu_tuple_cost至0.015，使CPU代价占比上升，抑制过度依赖IO路径",
+      "通过Set参数微调，使优化器更倾向选择索引扫描"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.1) Set(cpu_tuple_cost 0.015) Set(cpu_index_tuple_cost 0.006) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自代价模型更真实反映硬件特性，使优化器更倾向选择索引扫描路径"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "强制使用仅索引扫描并禁用回表，实现零回表性能跃迁，最大化索引效率",
+    "core_optimization_points": [
+      "确认idx_lineitem_shipdate包含l_discount、l_quantity、l_extendedprice等列（假设覆盖）",
+      "强制IndexOnlyScan，避免任何回表操作",
+      "禁用IndexScan与BitmapScan，防止路径回退",
+      "通过Rows Hint校正估计偏差"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(lineitem idx_lineitem_shipdate) Rows(lineitem *2.5) NoIndexScan(lineitem) NoBitmapScan(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时降低55%-70%，核心收益来自完全消除回表IO，仅索引扫描可实现每页顺序读取，性能接近线性加速"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "通过提升并行度与内存配置，加速大表扫描与聚合操作，解决并行不足问题",
+    "core_optimization_points": [
+      "当前Workers Launched: 4，但表大小超10GB，应启用更高并行度",
+      "提升max_parallel_workers_per_gather至16，使并行扫描更充分",
+      "提升work_mem至256MB，避免聚合操作磁盘溢出",
+      "通过Set参数临时调整"
+    ],
+    "hint_combination": "/*+ Set(max_parallel_workers_per_gather 16) Set(work_mem '256MB') Parallel(lineitem 16) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自并行扫描与聚合操作的加速，避免单线程瓶颈"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "强制使用索引扫描并禁用顺序扫描，防止优化器误选全表扫描路径",
+    "core_optimization_points": [
+      "虽然表大，但过滤条件强，应优先索引扫描",
+      "强制IndexScan，避免优化器误选SeqScan",
+      "禁用SeqScan以防止路径回退",
+      "通过Rows Hint校正估计偏差"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *3.0) NoSeqScan(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自避免全表扫描，直接走索引路径，减少I/O"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "通过调整代价参数，使优化器更倾向选择索引扫描路径，提升查询效率",
+    "core_optimization_points": [
+      "当前random_page_cost=4.0，对SSD不友好，导致索引扫描代价过高",
+      "将random_page_cost调至1.1，使索引扫描代价显著降低",
+      "提升cpu_tuple_cost至0.015，使CPU代价占比上升",
+      "通过Set参数调整，引导优化器选择更优路径"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.1) Set(cpu_tuple_cost 0.015) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自代价模型更真实反映硬件特性，使优化器更倾向选择索引扫描路径"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "强制使用位图扫描并提升并行度，适用于中等选择性过滤场景",
+    "core_optimization_points": [
+      "虽然过滤条件强，但多条件组合下位图扫描可能更优",
+      "强制BitmapScan，避免索引扫描的随机IO",
+      "提升并行度至12，加速扫描",
+      "通过Rows Hint校正估计偏差"
+    ],
+    "hint_combination": "/*+ BitmapScan(lineitem idx_lineitem_shipdate) Rows(lineitem *2.8) Parallel(lineitem 12) */",
+    "expected_performance_benefit": "预计执行耗时降低35%-50%，核心收益来自位图扫描的批量回表能力，减少随机IO"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "通过提升work_mem与并行度，避免聚合操作磁盘溢出，提升聚合效率",
+    "core_optimization_points": [
+      "聚合操作在多Worker下可能因work_mem不足导致磁盘溢出",
+      "提升work_mem至256MB，避免外部排序",
+      "提升并行度至12，加速扫描",
+      "通过Set参数调整"
+    ],
+    "hint_combination": "/*+ Set(work_mem '256MB') Parallel(lineitem 12) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自避免外部排序，提升聚合效率"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "强制使用索引扫描并禁用位图扫描，避免位图构建开销，提升扫描效率",
+    "core_optimization_points": [
+      "位图扫描在高选择性下开销更大，不如直接索引扫描",
+      "强制IndexScan，避免位图构建与回表开销",
+      "禁用BitmapScan防止路径回退",
+      "通过Rows Hint校正估计偏差"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *3.0) NoBitmapScan(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自避免位图构建与回表开销"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "通过调整代价参数，使优化器更倾向选择索引扫描路径，提升查询效率",
+    "core_optimization_points": [
+      "当前random_page_cost=4.0，对SSD不友好",
+      "将random_page_cost调至1.2，使索引扫描代价降低",
+      "提升cpu_tuple_cost至0.015，使CPU代价占比上升",
+      "通过Set参数调整"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.2) Set(cpu_tuple_cost 0.015) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自代价模型更真实反映硬件特性"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "强制使用仅索引扫描并提升并行度，实现零回表与高并行加速",
+    "core_optimization_points": [
+      "确认idx_lineitem_shipdate为覆盖索引",
+      "强制IndexOnlyScan，避免回表",
+      "提升并行度至16，加速扫描",
+      "通过Rows Hint校正估计偏差"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(lineitem idx_lineitem_shipdate) Rows(lineitem *2.5) Parallel(lineitem 16) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-75%，核心收益来自零回表与高并行加速"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "通过提升work_mem与并行度，避免聚合操作磁盘溢出，提升聚合效率",
+    "core_optimization_points": [
+      "聚合操作在多Worker下可能因work_mem不足导致磁盘溢出",
+      "提升work_mem至512MB，避免外部排序",
+      "提升并行度至16，加速扫描",
+      "通过Set参数调整"
+    ],
+    "hint_combination": "/*+ Set(work_mem '512MB') Parallel(lineitem 16) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自避免外部排序，提升聚合效率"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "强制使用索引扫描并禁用顺序扫描，防止优化器误选全表扫描路径",
+    "core_optimization_points": [
+      "虽然表大，但过滤条件强，应优先索引扫描",
+      "强制IndexScan，避免优化器误选SeqScan",
+      "禁用SeqScan以防止路径回退",
+      "通过Rows Hint校正估计偏差"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *3.0) NoSeqScan(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自避免全表扫描"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "通过调整代价参数，使优化器更倾向选择索引扫描路径，提升查询效率",
+    "core_optimization_points": [
+      "当前random_page_cost=4.0，对SSD不友好",
+      "将random_page_cost调至1.1，使索引扫描代价降低",
+      "提升cpu_tuple_cost至0.015，使CPU代价占比上升",
+      "通过Set参数调整"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.1) Set(cpu_tuple_cost 0.015) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自代价模型更真实反映硬件特性"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "强制使用仅索引扫描并提升并行度，实现零回表与高并行加速",
+    "core_optimization_points": [
+      "确认idx_lineitem_shipdate为覆盖索引",
+      "强制IndexOnlyScan，避免回表",
+      "提升并行度至16，加速扫描",
+      "通过Rows Hint校正估计偏差"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(lineitem idx_lineitem_shipdate) Rows(lineitem *2.5) Parallel(lineitem 16) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-75%，核心收益来自零回表与高并行加速"
+  }
+]
+```

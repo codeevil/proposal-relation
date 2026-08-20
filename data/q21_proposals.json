@@ -1,0 +1,244 @@
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "校正严重行数估计偏差，强制哈希连接并优化连接顺序，彻底消除嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "识别并校正`lineitem l1`与`supplier`连接后中间结果集的严重低估（实际行数39,448，估计仅1），使用Rows Hint修正",
+      "调整连接顺序为`nation → supplier → lineitem l1 → orders`，优先过滤小表nation，最小化驱动表规模",
+      "强制`supplier`与`lineitem l1`使用HashJoin，替代低效嵌套循环（原计划执行7216ms）",
+      "在`lineitem l1`上启用IndexOnlyScan，利用`idx_lineitem_suppkey`覆盖索引减少回表开销"
+    ],
+    "hint_combination": "/*+ Rows(supplier lineitem l1 *1000) Leading( (nation (supplier (lineitem l1 orders))) ) HashJoin(supplier lineitem l1) IndexOnlyScan(lineitem l1 idx_lineitem_suppkey) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自消除嵌套循环对大表的千万级循环扫描，哈希连接替代NestLoop，结合覆盖索引减少IO"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "强制使用仅索引扫描与位图扫描，减少回表与随机IO，提升大表过滤效率",
+    "core_optimization_points": [
+      "对`lineitem l1`强制使用`IndexOnlyScan`，利用`idx_lineitem_suppkey`覆盖索引，避免回表",
+      "对`lineitem l2`和`lineitem l3`使用`BitmapScan`，组合`l_orderkey`与`l_suppkey`条件，减少随机IO",
+      "在`nation`表上强制`SeqScan`，因表极小（25行），顺序扫描更优",
+      "提升`lineitem l1`的并行度至8，加速大表扫描"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(lineitem l1 idx_lineitem_suppkey) BitmapScan(lineitem l2 idx_lineitem_orderkey) BitmapScan(lineitem l3 idx_lineitem_orderkey) SeqScan(nation) Parallel(lineitem l1 8) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自减少`lineitem`表的回表IO和随机访问，位图扫描降低IO开销，提升并行扫描效率"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "重构连接顺序为灌木树结构，将子查询结果提前聚合，避免重复扫描",
+    "core_optimization_points": [
+      "将`lineitem l2`与`lineitem l3`的子查询结果预聚合，通过`Leading`强制先连接，形成子结果集",
+      "使用`Memoize`缓存`lineitem l2`的`l_orderkey`结果，避免重复扫描",
+      "将`supplier`与`nation`提前连接，形成小结果集驱动后续连接",
+      "强制`orders`与`lineitem l1`使用`MergeJoin`，复用`l_orderkey`索引排序"
+    ],
+    "hint_combination": "/*+ Leading( ((nation supplier) (lineitem l2 lineitem l3) (orders lineitem l1)) ) Memoize(lineitem l2 lineitem l1) MergeJoin(orders lineitem l1) */",
+    "expected_performance_benefit": "预计执行耗时降低55%-70%，核心收益来自减少`lineitem l2`与`lineitem l3`的重复扫描，Memoize缓存复用，合并连接复用索引排序"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "强制哈希连接替代嵌套循环，结合并行扫描与覆盖索引，全面提升大表处理效率",
+    "core_optimization_points": [
+      "强制`supplier`与`lineitem l1`使用`HashJoin`，避免嵌套循环在大表上循环扫描",
+      "在`lineitem l1`上启用`IndexOnlyScan`，利用`idx_lineitem_suppkey`覆盖索引",
+      "提升`lineitem l1`与`orders`的并行度至6，加速大表扫描",
+      "使用`Set(work_mem '256MB')`提升哈希表内存，避免磁盘溢出"
+    ],
+    "hint_combination": "/*+ HashJoin(supplier lineitem l1) IndexOnlyScan(lineitem l1 idx_lineitem_suppkey) Parallel(lineitem l1 6) Parallel(orders 6) Set(work_mem '256MB') */",
+    "expected_performance_benefit": "预计执行耗时降低60%-75%，核心收益来自哈希连接替代嵌套循环，覆盖索引减少IO，大并行度提升扫描吞吐，work_mem避免磁盘哈希"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "优化子查询执行路径，强制使用位图扫描与并行索引扫描，减少重复扫描开销",
+    "core_optimization_points": [
+      "对`lineitem l2`和`lineitem l3`强制使用`BitmapScan`，组合`l_orderkey`与`l_suppkey`条件",
+      "在`lineitem l2`和`lineitem l3`上启用`Parallel`并行扫描，提升大表过滤效率",
+      "强制`lineitem l3`使用`IndexScan`而非`IndexOnlyScan`，因`l_receiptdate`条件需回表",
+      "在`nation`上使用`SeqScan`，表极小，无需索引"
+    ],
+    "hint_combination": "/*+ BitmapScan(lineitem l2 idx_lineitem_orderkey) BitmapScan(lineitem l3 idx_lineitem_orderkey) Parallel(lineitem l2 4) Parallel(lineitem l3 4) IndexScan(lineitem l3 idx_lineitem_orderkey) SeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低45%-60%，核心收益来自位图扫描减少随机IO，大并行度提升子查询过滤速度，避免无效索引扫描"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "校正行数估计偏差，强制连接顺序为小表驱动，避免中间结果集过早膨胀",
+    "core_optimization_points": [
+      "识别`nation`表为极小表（25行），强制其作为连接起点",
+      "使用`Rows(nation *1)`校正其估计偏差（实际1行，估计1行，但需确保不被忽略）",
+      "强制`nation`与`supplier`使用`HashJoin`，形成小结果集驱动后续连接",
+      "在`orders`表上启用`IndexOnlyScan`，利用`orders_pkey`覆盖索引"
+    ],
+    "hint_combination": "/*+ Rows(nation *1) Leading( (nation (supplier (lineitem l1 orders))) ) HashJoin(nation supplier) IndexOnlyScan(orders orders_pkey) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自小表驱动，避免大表嵌套循环，索引仅扫描减少IO"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "使用`NoNestLoop`强制禁用嵌套循环，强制哈希连接，解决性能瓶颈",
+    "core_optimization_points": [
+      "强制`supplier`与`lineitem l1`之间禁用嵌套循环，避免低效循环扫描",
+      "强制`orders`与`lineitem l1`之间使用`HashJoin`，替代原`NestLoop`",
+      "在`lineitem l1`上启用`IndexOnlyScan`，减少回表",
+      "提升`lineitem l1`的并行度至8，加速大表扫描"
+    ],
+    "hint_combination": "/*+ NoNestLoop(supplier lineitem l1) NoNestLoop(orders lineitem l1) HashJoin(supplier lineitem l1) HashJoin(orders lineitem l1) IndexOnlyScan(lineitem l1 idx_lineitem_suppkey) Parallel(lineitem l1 8) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-70%，核心收益来自强制禁用嵌套循环，哈希连接替代低效循环，提升并行度"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "优化排序与分组路径，使用`IndexOnlyScan`与`MergeJoin`，避免内存排序",
+    "core_optimization_points": [
+      "在`supplier`上启用`IndexOnlyScan`，利用`idx_supplier_nationkey`覆盖索引",
+      "强制`supplier`与`nation`使用`MergeJoin`，复用`n_nationkey`索引排序",
+      "在`lineitem l1`上启用`IndexOnlyScan`，减少回表",
+      "使用`Set(work_mem '512MB')`提升排序内存，避免外部排序"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(supplier idx_supplier_nationkey) MergeJoin(supplier nation) IndexOnlyScan(lineitem l1 idx_lineitem_suppkey) Set(work_mem '512MB') */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自避免`supplier`回表，MergeJoin复用索引排序，work_mem避免磁盘排序"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "强制使用`Parallel`并行扫描与`BitmapScan`，提升大表过滤效率",
+    "core_optimization_points": [
+      "在`lineitem l1`上启用`Parallel(8)`，加速大表扫描",
+      "在`lineitem l2`和`lineitem l3`上启用`BitmapScan`，组合多条件过滤",
+      "在`orders`上启用`Parallel(4)`，加速大表扫描",
+      "使用`Set(random_page_cost 1.1)`匹配SSD性能"
+    ],
+    "hint_combination": "/*+ Parallel(lineitem l1 8) Parallel(orders 4) BitmapScan(lineitem l2 idx_lineitem_orderkey) BitmapScan(lineitem l3 idx_lineitem_orderkey) Set(random_page_cost 1.1) */",
+    "expected_performance_benefit": "预计执行耗时降低45%-60%，核心收益来自大并行度提升扫描吞吐，位图扫描减少随机IO，SSD代价参数匹配"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "重构连接顺序为左深树，将小表作为驱动表，最小化中间结果集规模",
+    "core_optimization_points": [
+      "使用`Leading( (nation supplier lineitem l1 orders) )`强制左深树连接顺序",
+      "将`nation`作为驱动表，仅1行，驱动后续连接",
+      "在`supplier`上启用`IndexOnlyScan`，利用`idx_supplier_nationkey`覆盖索引",
+      "在`lineitem l1`上启用`IndexOnlyScan`，减少回表"
+    ],
+    "hint_combination": "/*+ Leading( (nation supplier lineitem l1 orders) ) IndexOnlyScan(supplier idx_supplier_nationkey) IndexOnlyScan(lineitem l1 idx_lineitem_suppkey) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自小表驱动，左深树控制中间结果集增长，覆盖索引减少IO"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "强制使用`Memoize`缓存子查询结果，避免重复扫描大表",
+    "core_optimization_points": [
+      "在`lineitem l2`与`lineitem l1`之间启用`Memoize`，缓存`l_orderkey`结果",
+      "在`lineitem l3`与`lineitem l1`之间启用`Memoize`，缓存`l_orderkey`结果",
+      "强制`lineitem l2`与`lineitem l3`使用`IndexScan`，避免`IndexOnlyScan`误判",
+      "提升`lineitem l1`的并行度至6"
+    ],
+    "hint_combination": "/*+ Memoize(lineitem l2 lineitem l1) Memoize(lineitem l3 lineitem l1) IndexScan(lineitem l2 idx_lineitem_orderkey) IndexScan(lineitem l3 idx_lineitem_orderkey) Parallel(lineitem l1 6) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自Memoize缓存复用，避免对`lineitem`表的重复扫描"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "校正`orders`表行数估计偏差，避免嵌套循环驱动表过大",
+    "core_optimization_points": [
+      "识别`orders`表实际输出行数为0（`Rows Removed by Filter: 1`），但估计行数高",
+      "使用`Rows(orders *0.01)`校正其估计偏差",
+      "强制`orders`与`lineitem l1`使用`HashJoin`，替代嵌套循环",
+      "在`orders`上启用`IndexOnlyScan`，利用`orders_pkey`覆盖索引"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.01) HashJoin(orders lineitem l1) IndexOnlyScan(orders orders_pkey) */",
+    "expected_performance_benefit": "预计执行耗时降低45%-60%，核心收益来自修正`orders`表行数估计，避免嵌套循环驱动表过大"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "使用`Set(work_mem '1GB')`提升哈希与排序内存，避免磁盘溢出",
+    "core_optimization_points": [
+      "设置`work_mem`为1GB，避免哈希连接与排序磁盘溢出",
+      "在`lineitem l1`上启用`IndexOnlyScan`，减少回表",
+      "在`supplier`上启用`IndexOnlyScan`，减少回表",
+      "提升`lineitem l1`的并行度至8"
+    ],
+    "hint_combination": "/*+ Set(work_mem '1GB') IndexOnlyScan(lineitem l1 idx_lineitem_suppkey) IndexOnlyScan(supplier idx_supplier_nationkey) Parallel(lineitem l1 8) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自避免哈希与排序磁盘溢出，提升内存效率"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "强制使用`MergeJoin`复用索引排序，避免额外排序开销",
+    "core_optimization_points": [
+      "强制`supplier`与`nation`使用`MergeJoin`，复用`n_nationkey`索引排序",
+      "强制`orders`与`lineitem l1`使用`MergeJoin`，复用`l_orderkey`索引排序",
+      "在`lineitem l1`上启用`IndexOnlyScan`，减少回表",
+      "提升`lineitem l1`的并行度至6"
+    ],
+    "hint_combination": "/*+ MergeJoin(supplier nation) MergeJoin(orders lineitem l1) IndexOnlyScan(lineitem l1 idx_lineitem_suppkey) Parallel(lineitem l1 6) */",
+    "expected_performance_benefit": "预计执行耗时降低45%-60%，核心收益来自复用索引排序，避免额外排序开销"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "使用`NoSeqScan`强制避免全表扫描，提升扫描效率",
+    "core_optimization_points": [
+      "在`supplier`上启用`NoSeqScan`，强制使用索引扫描",
+      "在`orders`上启用`NoSeqScan`，强制使用索引扫描",
+      "在`lineitem l1`上启用`NoSeqScan`，强制使用索引扫描",
+      "在`nation`上启用`NoSeqScan`，因表极小，无需扫描"
+    ],
+    "hint_combination": "/*+ NoSeqScan(supplier) NoSeqScan(orders) NoSeqScan(lineitem l1) NoSeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低35%-50%，核心收益来自避免全表扫描，强制使用索引扫描"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "强制使用`IndexOnlyScan`覆盖索引，减少回表IO开销",
+    "core_optimization_points": [
+      "在`supplier`上启用`IndexOnlyScan(idx_supplier_nationkey)`，覆盖所有查询列",
+      "在`orders`上启用`IndexOnlyScan(orders_pkey)`，覆盖所有查询列",
+      "在`lineitem l1`上启用`IndexOnlyScan(idx_lineitem_suppkey)`，覆盖所有查询列",
+      "在`nation`上启用`IndexOnlyScan(nation_pkey)`，覆盖所有查询列"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(supplier idx_supplier_nationkey) IndexOnlyScan(orders orders_pkey) IndexOnlyScan(lineitem l1 idx_lineitem_suppkey) IndexOnlyScan(nation nation_pkey) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自完全避免回表IO，覆盖索引扫描效率最高"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "使用`Set(random_page_cost 1.1)`匹配SSD性能，降低索引扫描代价",
+    "core_optimization_points": [
+      "设置`random_page_cost`为1.1，匹配SSD随机读性能",
+      "在`lineitem l1`上启用`IndexOnlyScan`，减少回表",
+      "在`supplier`上启用`IndexOnlyScan`，减少回表",
+      "提升`lineitem l1`的并行度至8"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.1) IndexOnlyScan(lineitem l1 idx_lineitem_suppkey) IndexOnlyScan(supplier idx_supplier_nationkey) Parallel(lineitem l1 8) */",
+    "expected_performance_benefit": "预计执行耗时降低30%-45%，核心收益来自降低索引扫描代价，提升索引扫描性价比"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "使用`NoBitmapScan`强制避免位图扫描，提升索引扫描效率",
+    "core_optimization_points": [
+      "在`lineitem l1`上启用`NoBitmapScan`，强制使用`IndexScan`",
+      "在`lineitem l2`上启用`NoBitmapScan`，强制使用`IndexScan`",
+      "在`lineitem l3`上启用`NoBitmapScan`，强制使用`IndexScan`",
+      "在`supplier`上启用`IndexOnlyScan`，减少回表"
+    ],
+    "hint_combination": "/*+ NoBitmapScan(lineitem l1) NoBitmapScan(lineitem l2) NoBitmapScan(lineitem l3) IndexOnlyScan(supplier idx_supplier_nationkey) */",
+    "expected_performance_benefit": "预计执行耗时降低25%-40%，核心收益来自避免位图扫描开销，提升索引扫描效率"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "强制使用`Parallel(0)`禁用并行扫描，避免小表并行开销",
+    "core_optimization_points": [
+      "在`nation`上启用`Parallel(0)`，禁用并行扫描",
+      "在`orders`上启用`Parallel(0)`，因`o_orderstatus = 'F'`过滤后行数少",
+      "在`supplier`上启用`Parallel(0)`，因表小",
+      "在`lineitem l1`上启用`Parallel(4)`，因表大"
+    ],
+    "hint_combination": "/*+ Parallel(nation 0) Parallel(orders 0) Parallel(supplier 0) Parallel(lineitem l1 4) */",
+    "expected_performance_benefit": "预计执行耗时降低20%-35%，核心收益来自避免小表并行开销，提升整体效率"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "使用`Set(effective_cache_size '16GB')`提升缓存感知，优化代价模型",
+    "core_optimization_points": [
+      "设置`effective_cache_size`为16GB，提升缓存感知能力",
+      "在`lineitem l1`上启用`IndexOnlyScan`，减少回表",
+      "在`supplier`上启用`IndexOnlyScan`，减少回表",
+      "提升`lineitem l1`的并行度至6"
+    ],
+    "hint_combination": "/*+ Set(effective_cache_size '16GB') IndexOnlyScan(lineitem l1 idx_lineitem_suppkey) IndexOnlyScan(supplier idx_supplier_nationkey) Parallel(lineitem l1 6) */",
+    "expected_performance_benefit": "预计执行耗时降低25%-40%，核心收益来自优化代价模型，提升缓存利用率"
+  }
+]
+```

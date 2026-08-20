@@ -1,0 +1,43 @@
+Finalize GroupAggregate  (cost=398895.66..401072.41 rows=10064 width=116) (actual time=5233.337..5456.878 rows=4 loops=1)
+  Group Key: n1.n_name, n2.n_name, (EXTRACT(year FROM lineitem.l_shipdate))
+  ->  Gather Merge  (cost=398895.66..400795.65 rows=10064 width=116) (actual time=5229.705..5456.858 rows=8 loops=1)
+        Workers Planned: 1
+        Workers Launched: 1
+        ->  Partial GroupAggregate  (cost=397895.65..398663.44 rows=10064 width=116) (actual time=5212.151..5223.703 rows=4 loops=2)
+              Group Key: n1.n_name, n2.n_name, (EXTRACT(year FROM lineitem.l_shipdate))
+              ->  Sort  (cost=397895.65..397983.77 rows=35247 width=96) (actual time=5208.356..5209.659 rows=29182 loops=2)
+                    Sort Key: n1.n_name, n2.n_name, (EXTRACT(year FROM lineitem.l_shipdate))
+                    Sort Method: quicksort  Memory: 3808kB
+                    Worker 0:  Sort Method: quicksort  Memory: 4113kB
+                    ->  Parallel Hash Join  (cost=93659.60..395233.59 rows=35247 width=96) (actual time=1417.230..5191.762 rows=29182 loops=2)
+                          Hash Cond: (lineitem.l_orderkey = orders.o_orderkey)
+                          Join Filter: (((n1.n_name = 'FRANCE'::bpchar) AND (n2.n_name = 'GERMANY'::bpchar)) OR ((n1.n_name = 'GERMANY'::bpchar) AND (n2.n_name = 'FRANCE'::bpchar)))
+                          Rows Removed by Join Filter: 29324
+                          ->  Nested Loop  (cost=1.96..297972.97 rows=846958 width=46) (actual time=7.297..3490.048 rows=730128 loops=2)
+                                ->  Hash Join  (cost=1.40..2986.23 rows=4706 width=30) (actual time=0.066..16.504 rows=4005 loops=2)
+                                      Hash Cond: (supplier.s_nationkey = n1.n_nationkey)
+                                      ->  Parallel Seq Scan on supplier  (cost=0.00..2804.24 rows=58824 width=8) (actual time=0.018..6.924 rows=50000 loops=2)
+                                      ->  Hash  (cost=1.38..1.38 rows=2 width=30) (actual time=0.017..0.018 rows=2 loops=2)
+                                            Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                            ->  Seq Scan on nation n1  (cost=0.00..1.38 rows=2 width=30) (actual time=0.011..0.014 rows=2 loops=2)
+                                                  Filter: ((n_name = 'FRANCE'::bpchar) OR (n_name = 'GERMANY'::bpchar))
+                                                  Rows Removed by Filter: 23
+                                ->  Index Scan using idx_lineitem_suppkey on lineitem  (cost=0.56..60.88 rows=180 width=24) (actual time=0.022..0.851 rows=182 loops=8010)
+                                      Index Cond: (l_suppkey = supplier.s_suppkey)
+                                      Filter: ((l_shipdate >= '1995-01-01'::date) AND (l_shipdate <= '1996-12-31'::date))
+                                      Rows Removed by Filter: 417
+                          ->  Parallel Hash  (cost=89907.67..89907.67 rows=299997 width=30) (actual time=1402.109..1402.112 rows=602904 loops=2)
+                                Buckets: 2097152  Batches: 1  Memory Usage: 91936kB
+                                ->  Nested Loop  (cost=1.83..89907.67 rows=299997 width=30) (actual time=0.198..1167.462 rows=602904 loops=2)
+                                      ->  Hash Join  (cost=1.40..40729.54 rows=29999 width=30) (actual time=0.097..186.501 rows=60234 loops=2)
+                                            Hash Cond: (customer.c_nationkey = n2.n_nationkey)
+                                            ->  Parallel Seq Scan on customer  (cost=0.00..39576.91 rows=374991 width=8) (actual time=0.028..66.842 rows=750000 loops=2)
+                                            ->  Hash  (cost=1.38..1.38 rows=2 width=30) (actual time=0.044..0.045 rows=2 loops=2)
+                                                  Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                                  ->  Seq Scan on nation n2  (cost=0.00..1.38 rows=2 width=30) (actual time=0.032..0.037 rows=2 loops=2)
+                                                        Filter: ((n_name = 'GERMANY'::bpchar) OR (n_name = 'FRANCE'::bpchar))
+                                                        Rows Removed by Filter: 23
+                                      ->  Index Scan using idx_orders_custkey on orders  (cost=0.43..1.47 rows=17 width=8) (actual time=0.003..0.015 rows=10 loops=120469)
+                                            Index Cond: (o_custkey = customer.c_custkey)
+Planning Time: 4.051 ms
+Execution Time: 5457.479 ms

@@ -1,0 +1,51 @@
+Finalize GroupAggregate  (cost=507099.22..539215.63 rows=60150 width=90) (actual time=8695.053..8972.734 rows=175 loops=1)
+  Group Key: nation.n_name, (EXTRACT(year FROM orders.o_orderdate))
+  ->  Gather Merge  (cost=507099.22..535907.38 rows=240600 width=90) (actual time=8695.007..8972.320 rows=700 loops=1)
+        Workers Planned: 4
+        Workers Launched: 3
+        ->  Sort  (cost=506099.16..506249.54 rows=60150 width=90) (actual time=8681.494..8681.509 rows=175 loops=4)
+              Sort Key: nation.n_name, (EXTRACT(year FROM orders.o_orderdate)) DESC
+              Sort Method: quicksort  Memory: 49kB
+              Worker 0:  Sort Method: quicksort  Memory: 49kB
+              Worker 1:  Sort Method: quicksort  Memory: 49kB
+              Worker 2:  Sort Method: quicksort  Memory: 49kB
+              ->  Partial HashAggregate  (cost=500422.12..501324.37 rows=60150 width=90) (actual time=8680.163..8681.271 rows=175 loops=4)
+                    Group Key: nation.n_name, EXTRACT(year FROM orders.o_orderdate)
+                    Batches: 1  Memory Usage: 3217kB
+                    Worker 0:  Batches: 1  Memory Usage: 3217kB
+                    Worker 1:  Batches: 1  Memory Usage: 3217kB
+                    Worker 2:  Batches: 1  Memory Usage: 3217kB
+                    ->  Nested Loop  (cost=3542.42..492692.74 rows=441679 width=81) (actual time=20.327..7893.675 rows=815403 loops=4)
+                          ->  Nested Loop  (cost=3541.97..291543.26 rows=441679 width=53) (actual time=20.213..3344.990 rows=815403 loops=4)
+                                Join Filter: (supplier.s_suppkey = lineitem.l_suppkey)
+                                ->  Hash Join  (cost=3541.53..192014.22 rows=60604 width=48) (actual time=16.764..380.176 rows=108782 loops=4)
+                                      Hash Cond: (supplier.s_nationkey = nation.n_nationkey)
+                                      ->  Parallel Hash Join  (cost=3539.97..191826.60 rows=60604 width=26) (actual time=16.684..355.603 rows=108782 loops=4)
+                                            Hash Cond: (partsupp.ps_suppkey = supplier.s_suppkey)
+                                            ->  Nested Loop  (cost=0.43..188127.97 rows=60604 width=18) (actual time=0.122..268.695 rows=108782 loops=4)
+                                                  ->  Parallel Seq Scan on part  (cost=0.00..47211.97 rows=15152 width=4) (actual time=0.020..112.622 rows=27196 loops=4)
+                                                        Filter: ((p_name)::text ~~ '%green%'::text)
+                                                        Rows Removed by Filter: 472804
+                                                  ->  Index Scan using partsupp_pkey on partsupp  (cost=0.43..9.13 rows=17 width=14) (actual time=0.004..0.005 rows=4 loops=108782)
+                                                        Index Cond: (ps_partkey = part.p_partkey)
+                                            ->  Parallel Hash  (cost=2804.24..2804.24 rows=58824 width=8) (actual time=16.120..16.121 rows=25000 loops=4)
+                                                  Buckets: 131072  Batches: 1  Memory Usage: 4992kB
+                                                  ->  Parallel Seq Scan on supplier  (cost=0.00..2804.24 rows=58824 width=8) (actual time=0.022..8.501 rows=25000 loops=4)
+                                      ->  Hash  (cost=1.25..1.25 rows=25 width=30) (actual time=0.050..0.051 rows=25 loops=4)
+                                            Buckets: 1024  Batches: 1  Memory Usage: 10kB
+                                            ->  Seq Scan on nation  (cost=0.00..1.25 rows=25 width=30) (actual time=0.031..0.035 rows=25 loops=4)
+                                ->  Index Scan using idx_lineitem_partkey on lineitem  (cost=0.44..1.63 rows=1 width=29) (actual time=0.006..0.026 rows=7 loops=435128)
+                                      Index Cond: (l_partkey = partsupp.ps_partkey)
+                                      Filter: (partsupp.ps_suppkey = l_suppkey)
+                                      Rows Removed by Filter: 22
+                          ->  Memoize  (cost=0.45..0.48 rows=1 width=8) (actual time=0.005..0.005 rows=1 loops=3261613)
+                                Cache Key: lineitem.l_orderkey
+                                Cache Mode: logical
+                                Hits: 21501  Misses: 789645  Evictions: 0  Overflows: 0  Memory Usage: 83283kB
+                                Worker 0:  Hits: 22415  Misses: 807024  Evictions: 0  Overflows: 0  Memory Usage: 85116kB
+                                Worker 1:  Hits: 24094  Misses: 833221  Evictions: 0  Overflows: 0  Memory Usage: 87879kB
+                                Worker 2:  Hits: 19052  Misses: 744661  Evictions: 0  Overflows: 0  Memory Usage: 78539kB
+                                ->  Index Scan using orders_pkey on orders  (cost=0.43..0.47 rows=1 width=8) (actual time=0.005..0.005 rows=1 loops=3174551)
+                                      Index Cond: (o_orderkey = lineitem.l_orderkey)
+Planning Time: 7.226 ms
+Execution Time: 8995.799 ms

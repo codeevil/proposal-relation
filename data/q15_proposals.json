@@ -1,0 +1,244 @@
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "修正CTE聚合结果集行数估计偏差，强制哈希连接并优化连接顺序，消除嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正CTE `revenue` 的行数估计偏差，原估计101515行但实际为100000，使用乘法系数校正",
+      "调整连接顺序为 `revenue` 作为驱动表，`supplier` 作为内表，避免大表嵌套循环",
+      "强制 `revenue` 与 `supplier` 使用哈希连接，替代低效的嵌套循环",
+      "提升 `lineitem` 表扫描并行度至8，加速大表过滤"
+    ],
+    "hint_combination": "/*+ Rows(revenue *0.98) Leading( (revenue supplier) ) HashJoin(revenue supplier) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-75%，核心收益来自消除 `Nested Loop` 对 `supplier` 的单行重复扫描，同时并行加速 `lineitem` 过滤"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "强制使用仅索引扫描优化 `lineitem` 表的过滤路径，减少回表IO与随机读开销",
+    "core_optimization_points": [
+      "强制 `lineitem` 使用 `idx_lineitem_shipdate` 进行仅索引扫描，避免回表",
+      "因 `l_shipdate` 在索引中且查询仅需 `l_suppkey` 和 `l_extendedprice`，可覆盖",
+      "禁用 `SeqScan` 与 `BitmapScan`，强制最优路径",
+      "提升 `revenue` 聚合阶段并行度至6，加速CTE生成"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(lineitem idx_lineitem_shipdate) NoSeqScan(lineitem) NoBitmapScan(lineitem) Parallel(revenue 6) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-65%，核心收益来自避免 `lineitem` 的回表IO，减少随机读开销，提升CTE生成速度"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "通过 `Rows` Hint 校正 `revenue` 中间结果集估计，避免因估计偏差导致错误连接顺序",
+    "core_optimization_points": [
+      "校正 `revenue` 的行数估计为 100000，实际与 `reltuples` 接近，使用乘法系数修正",
+      "强制 `revenue` 作为驱动表，与 `supplier` 建立哈希连接",
+      "禁用 `NestLoop`，防止优化器误选嵌套循环",
+      "设置 `work_mem` 为 256MB，避免哈希表溢出"
+    ],
+    "hint_combination": "/*+ Rows(revenue *0.98) Leading( (revenue supplier) ) NoNestLoop(revenue supplier) Set(work_mem '256MB') */",
+    "expected_performance_benefit": "预计执行耗时降低55%-70%，核心收益来自纠正优化器对 `revenue` 结果集的高估，避免选择错误的连接顺序"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "强制 `lineitem` 使用位图扫描并优化 `revenue` 的并行聚合，提升大表过滤效率",
+    "core_optimization_points": [
+      "强制 `lineitem` 使用 `BitmapScan`，结合 `idx_lineitem_shipdate` 提升中等选择性查询效率",
+      "提升 `revenue` 的 `Parallel` worker 数量至6，加速 `HashAggregate`",
+      "禁用 `IndexScan`，防止优化器选择非覆盖索引扫描",
+      "设置 `random_page_cost` 为 1.1，匹配SSD性能"
+    ],
+    "hint_combination": "/*+ BitmapScan(lineitem idx_lineitem_shipdate) Parallel(revenue 6) NoIndexScan(lineitem) Set(random_page_cost 1.1) */",
+    "expected_performance_benefit": "预计执行耗时降低45%-60%，核心收益来自位图扫描减少随机IO，提升 `revenue` 聚合并行度"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "重构连接顺序为灌木树结构，先聚合 `revenue` 再连接 `supplier`，避免中间结果膨胀",
+    "core_optimization_points": [
+      "使用灌木树写法 `Leading( (revenue supplier) )`，强制 `revenue` 与 `supplier` 为直接连接组",
+      "强制 `revenue` 与 `supplier` 使用 `HashJoin`，避免嵌套循环",
+      "禁用 `NestLoop`，防止优化器选择低效路径",
+      "提升 `lineitem` 并行度至6，加速过滤"
+    ],
+    "hint_combination": "/*+ Leading( (revenue supplier) ) HashJoin(revenue supplier) NoNestLoop(revenue supplier) Parallel(lineitem 6) */",
+    "expected_performance_benefit": "预计执行耗时降低50%-68%，核心收益来自结构化连接顺序，避免 `revenue` 被错误地作为内表循环"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "强制 `supplier` 使用主键索引扫描，避免全表扫描，提升连接效率",
+    "core_optimization_points": [
+      "强制 `supplier` 使用 `supplier_pkey` 进行 `IndexScan`，确保单行快速定位",
+      "因 `s_suppkey` 为唯一主键，`IndexScan` 代价最低",
+      "禁用 `SeqScan` 和 `BitmapScan`，防止错误路径",
+      "提升 `revenue` 聚合阶段并行度至4"
+    ],
+    "hint_combination": "/*+ IndexScan(supplier supplier_pkey) NoSeqScan(supplier) NoBitmapScan(supplier) Parallel(revenue 4) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自 `supplier` 表的单行定位优化，避免全表扫描开销"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "通过 `Rows` Hint 修正 `revenue` 与 `supplier` 连接后结果集估计，防止排序与连接误判",
+    "core_optimization_points": [
+      "校正 `revenue` 与 `supplier` 连接后的行数估计，实际为1，估计为508，使用乘法系数校正",
+      "强制 `revenue` 作为驱动表，`supplier` 为内表",
+      "禁用 `NestLoop`，强制 `HashJoin`",
+      "设置 `work_mem` 为 128MB，避免排序溢出"
+    ],
+    "hint_combination": "/*+ Rows(revenue supplier *0.002) Leading( (revenue supplier) ) NoNestLoop(revenue supplier) Set(work_mem '128MB') */",
+    "expected_performance_benefit": "预计执行耗时降低48%-63%，核心收益来自纠正连接后行数估计，避免 `Sort` 节点误判为大结果集"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "强制 `lineitem` 使用 `BitmapAnd` 优化多条件过滤（虽未显式使用，但可提升位图扫描效率）",
+    "core_optimization_points": [
+      "因 `l_shipdate` 为唯一过滤条件，`BitmapIndexScan` 已最优，但可显式控制",
+      "强制 `lineitem` 使用 `BitmapScan`，结合 `idx_lineitem_shipdate`",
+      "提升 `revenue` 并行度至6，加速聚合",
+      "禁用 `SeqScan`，防止全表扫描"
+    ],
+    "hint_combination": "/*+ BitmapScan(lineitem idx_lineitem_shipdate) Parallel(revenue 6) NoSeqScan(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时降低42%-58%，核心收益来自位图扫描减少随机IO，提升大表过滤效率"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "禁用 `NestLoop` 并强制 `HashJoin`，解决嵌套循环在大表连接中的性能瓶颈",
+    "core_optimization_points": [
+      "禁用 `revenue` 与 `supplier` 之间的 `NestLoop`，防止外层 `revenue` 10万行导致内层 `supplier` 被扫描10万次",
+      "强制使用 `HashJoin`，适合等值连接且结果集大",
+      "提升 `lineitem` 并行度至8，加速过滤",
+      "设置 `effective_cache_size` 为 16GB，提升缓存命中率"
+    ],
+    "hint_combination": "/*+ NoNestLoop(revenue supplier) HashJoin(revenue supplier) Parallel(lineitem 8) Set(effective_cache_size '16GB') */",
+    "expected_performance_benefit": "预计执行耗时降低53%-70%，核心收益来自消除嵌套循环的指数级扫描开销"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "优化 `revenue` CTE 的聚合路径，使用并行哈希聚合加速大表分组",
+    "core_optimization_points": [
+      "提升 `revenue` 的 `Parallel` worker 数量至6，加速 `HashAggregate`",
+      "强制 `lineitem` 使用 `IndexOnlyScan`，减少回表",
+      "禁用 `SeqScan`，防止低效路径",
+      "设置 `work_mem` 为 256MB，避免哈希溢出"
+    ],
+    "hint_combination": "/*+ Parallel(revenue 6) IndexOnlyScan(lineitem idx_lineitem_shipdate) NoSeqScan(lineitem) Set(work_mem '256MB') */",
+    "expected_performance_benefit": "预计执行耗时降低45%-62%，核心收益来自并行聚合加速CTE生成"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "强制 `supplier` 使用 `IndexScan` 并禁用 `SeqScan`，确保单行访问效率",
+    "core_optimization_points": [
+      "强制 `supplier` 使用 `supplier_pkey` 进行 `IndexScan`，确保高效定位",
+      "禁用 `SeqScan`，防止全表扫描",
+      "禁用 `BitmapScan`，避免不必要的位图构建",
+      "提升 `revenue` 并行度至4"
+    ],
+    "hint_combination": "/*+ IndexScan(supplier supplier_pkey) NoSeqScan(supplier) NoBitmapScan(supplier) Parallel(revenue 4) */",
+    "expected_performance_benefit": "预计执行耗时降低38%-52%，核心收益来自 `supplier` 表的单行快速访问"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "通过 `Set` 调整代价参数，引导优化器更倾向于哈希连接与并行扫描",
+    "core_optimization_points": [
+      "降低 `seq_page_cost` 为 0.8，鼓励顺序扫描与并行",
+      "降低 `random_page_cost` 为 1.1，匹配SSD性能",
+      "提高 `cpu_tuple_cost` 为 0.02，鼓励减少CPU密集操作",
+      "提升 `max_parallel_workers_per_gather` 为 8"
+    ],
+    "hint_combination": "/*+ Set(seq_page_cost 0.8) Set(random_page_cost 1.1) Set(cpu_tuple_cost 0.02) Set(max_parallel_workers_per_gather 8) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自引导优化器选择更优路径"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "强制 `revenue` 与 `supplier` 使用 `MergeJoin`，复用 `s_suppkey` 的排序优势",
+    "core_optimization_points": [
+      "因 `supplier` 主键为 `s_suppkey`，天然有序，`MergeJoin` 代价低",
+      "强制 `revenue` 与 `supplier` 使用 `MergeJoin`，避免哈希构建开销",
+      "禁用 `HashJoin` 与 `NestLoop`",
+      "提升 `lineitem` 并行度至6"
+    ],
+    "hint_combination": "/*+ MergeJoin(revenue supplier) NoHashJoin(revenue supplier) NoNestLoop(revenue supplier) Parallel(lineitem 6) */",
+    "expected_performance_benefit": "预计执行耗时降低43%-57%，核心收益来自复用排序，避免哈希构建"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "通过 `Rows` Hint 修正 `revenue` 的行数估计，避免 `Sort` 节点误判为大结果集",
+    "core_optimization_points": [
+      "校正 `revenue` 行数估计为 100000，与实际一致，使用乘法系数",
+      "强制 `revenue` 作为驱动表，`supplier` 为内表",
+      "禁用 `NestLoop`，强制 `HashJoin`",
+      "提升 `work_mem` 为 256MB，避免排序溢出"
+    ],
+    "hint_combination": "/*+ Rows(revenue *0.98) Leading( (revenue supplier) ) NoNestLoop(revenue supplier) Set(work_mem '256MB') */",
+    "expected_performance_benefit": "预计执行耗时降低47%-64%，核心收益来自纠正 `Sort` 节点的误判"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "强制 `lineitem` 使用 `IndexOnlyScan` 并提升并行度，加速大表过滤",
+    "core_optimization_points": [
+      "强制 `lineitem` 使用 `idx_lineitem_shipdate` 的 `IndexOnlyScan`，避免回表",
+      "提升 `lineitem` 并行度至8，加速扫描",
+      "禁用 `SeqScan` 与 `BitmapScan`",
+      "设置 `effective_cache_size` 为 32GB，提升缓存"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 8) NoSeqScan(lineitem) NoBitmapScan(lineitem) Set(effective_cache_size '32GB') */",
+    "expected_performance_benefit": "预计执行耗时降低50%-68%，核心收益来自覆盖索引与并行加速"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "优化 `revenue` 的连接顺序，使用灌木树结构强制先聚合再连接",
+    "core_optimization_points": [
+      "使用 `Leading( (revenue supplier) )` 灌木树结构，明确连接顺序",
+      "强制 `revenue` 与 `supplier` 使用 `HashJoin`",
+      "提升 `revenue` 并行度至6",
+      "禁用 `NestLoop`"
+    ],
+    "hint_combination": "/*+ Leading( (revenue supplier) ) HashJoin(revenue supplier) Parallel(revenue 6) NoNestLoop(revenue supplier) */",
+    "expected_performance_benefit": "预计执行耗时降低46%-62%，核心收益来自结构化连接顺序"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "通过 `Set` 调整 `work_mem`，避免哈希与排序溢出到磁盘",
+    "core_optimization_points": [
+      "设置 `work_mem` 为 256MB，避免 `HashAggregate` 与 `Sort` 溢出",
+      "提升 `revenue` 并行度至6",
+      "强制 `lineitem` 使用 `IndexOnlyScan`",
+      "禁用 `SeqScan`"
+    ],
+    "hint_combination": "/*+ Set(work_mem '256MB') Parallel(revenue 6) IndexOnlyScan(lineitem idx_lineitem_shipdate) NoSeqScan(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时降低44%-60%，核心收益来自避免磁盘溢出"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "强制 `supplier` 使用 `IndexScan` 并禁用 `SeqScan`，确保连接高效",
+    "core_optimization_points": [
+      "强制 `supplier` 使用 `supplier_pkey` 进行 `IndexScan`",
+      "禁用 `SeqScan`，防止全表扫描",
+      "禁用 `BitmapScan`",
+      "提升 `revenue` 并行度至4"
+    ],
+    "hint_combination": "/*+ IndexScan(supplier supplier_pkey) NoSeqScan(supplier) NoBitmapScan(supplier) Parallel(revenue 4) */",
+    "expected_performance_benefit": "预计执行耗时降低39%-53%，核心收益来自 `supplier` 表的快速定位"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "通过 `Rows` Hint 修正 `revenue` 与 `supplier` 连接后行数，避免 `Sort` 误判",
+    "core_optimization_points": [
+      "校正 `revenue` 与 `supplier` 连接后行数为 1，使用乘法系数",
+      "强制 `revenue` 作为驱动表",
+      "强制 `HashJoin`",
+      "提升 `work_mem` 为 128MB"
+    ],
+    "hint_combination": "/*+ Rows(revenue supplier *0.002) Leading( (revenue supplier) ) HashJoin(revenue supplier) Set(work_mem '128MB') */",
+    "expected_performance_benefit": "预计执行耗时降低48%-65%，核心收益来自纠正 `Sort` 节点的误判"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "综合优化：校正估计、强制哈希连接、提升并行度、调整代价参数",
+    "core_optimization_points": [
+      "校正 `revenue` 行数估计为 100000",
+      "强制 `revenue` 与 `supplier` 使用 `HashJoin`",
+      "提升 `revenue` 并行度至6，`lineitem` 至8",
+      "设置 `work_mem` 为 256MB，`random_page_cost` 为 1.1"
+    ],
+    "hint_combination": "/*+ Rows(revenue *0.98) Leading( (revenue supplier) ) HashJoin(revenue supplier) Parallel(revenue 6) Parallel(lineitem 8) Set(work_mem '256MB') Set(random_page_cost 1.1) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-75%，综合收益最大，为最优策略"
+  }
+]
+```

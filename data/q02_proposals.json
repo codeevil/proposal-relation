@@ -1,0 +1,239 @@
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "修正严重行数估计偏差，强制以小表驱动大表连接，避免嵌套循环对大表的重复扫描",
+    "core_optimization_points": [
+      "识别子查询中region和nation过滤后结果极小（仅5行），应作为驱动表优先连接",
+      "校正主查询中`part`表过滤后实际行数约1571，远低于优化器估计的7808，使用乘法系数修正",
+      "强制将`region`与`nation`作为最外层驱动表，通过灌木树结构控制连接顺序",
+      "强制`part`与`partsupp`使用哈希连接，替代低效的合并连接与外层嵌套循环"
+    ],
+    "hint_combination": "/*+ Rows(part *0.2) Leading( (region (nation (part partsupp))) ) HashJoin(part partsupp) HashJoin(nation region) NoNestLoop(part partsupp) */",
+    "expected_performance_benefit": "预计执行耗时下降60%-80%，核心收益来自消除对`partsupp`的全表扫描与对`supplier`的重复嵌套循环，解决中间结果集膨胀问题"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "重构连接顺序，将小结果集驱动表前置，避免早期连接产生超大中间结果",
+    "core_optimization_points": [
+      "识别`region`（5行）与`nation`（25行）过滤后规模极小，应作为最外层驱动表",
+      "将`supplier`表提前至连接顺序中，利用其`idx_supplier_nationkey`索引快速筛选欧洲供应商",
+      "强制`part`与`partsupp`在`supplier`筛选后连接，避免在未过滤前就连接大表",
+      "使用灌木树结构明确分层连接，提升优化器决策准确性"
+    ],
+    "hint_combination": "/*+ Leading( (region (nation (supplier (part partsupp)))) ) HashJoin(supplier part) HashJoin(supplier partsupp) NoMergeJoin(part partsupp) */",
+    "expected_performance_benefit": "预计执行耗时下降50%-70%，核心收益来自将`supplier`的过滤提前，减少`partsupp`与`part`的无效连接数据量"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "强制使用仅索引扫描，消除`supplier`表回表开销，提升连接效率",
+    "core_optimization_points": [
+      "`supplier`表的`idx_supplier_nationkey`索引覆盖`s_nationkey`字段，可支持仅索引扫描",
+      "查询中`supplier`仅需访问`s_suppkey`、`s_nationkey`、`s_acctbal`、`s_name`等字段，其中`s_acctbal`与`s_name`为非索引列",
+      "因`s_acctbal`不在索引中，无法实现完全覆盖，但`idx_supplier_nationkey`可减少回表次数",
+      "强制使用`IndexOnlyScan`，并结合`BitmapScan`提升过滤效率"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(supplier idx_supplier_nationkey) BitmapScan(supplier idx_supplier_nationkey) NoSeqScan(supplier) */",
+    "expected_performance_benefit": "预计执行耗时下降25%-40%，核心收益来自减少`supplier`表的回表IO，尤其在`BitmapIndexScan`命中后大幅降低随机读开销"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "校正子查询中`ps_supplycost`最小值的估计偏差，避免多次重复扫描",
+    "core_optimization_points": [
+      "子查询中`partsupp`扫描800万行，但仅需找到最小`ps_supplycost`，无需全表扫描",
+      "子查询执行6351次，每次扫描`partsupp`与`supplier`，严重拖慢主查询",
+      "强制子查询使用`IndexOnlyScan`定位最小值，避免全表扫描",
+      "使用`Memoize`缓存子查询结果，避免重复执行"
+    ],
+    "hint_combination": "/*+ Memoize(region nation) Rows(part *0.1) Leading( (region (nation (part partsupp)))) IndexOnlyScan(partsupp partsupp_pkey) */",
+    "expected_performance_benefit": "预计执行耗时下降40%-60%，核心收益来自将子查询从6351次嵌套循环降至1次，大幅减少`partsupp`的扫描次数"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "强制`part`表使用索引扫描，避免全表扫描与高过滤开销",
+    "core_optimization_points": [
+      "`part`表总行数近200万，但过滤条件`p_size=15`和`p_type LIKE '%BRASS'`选择性高",
+      "统计信息显示`p_size`有50个唯一值，`p_type`有150个唯一值，选择性约1/50 × 1/150 = 0.000133",
+      "预计过滤后行数约266行，但优化器估计为7808，严重低估，需修正",
+      "强制使用`part_pkey`索引扫描，避免`SeqScan`"
+    ],
+    "hint_combination": "/*+ IndexScan(part part_pkey) Rows(part *0.03) NoSeqScan(part) */",
+    "expected_performance_benefit": "预计执行耗时下降35%-55%，核心收益来自避免对`part`的全表扫描，仅扫描匹配的1571行"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "提升`partsupp`表并行度，加速大表扫描与连接",
+    "core_optimization_points": [
+      "`partsupp`表有800万行，扫描代价高，当前仅使用1个worker",
+      "`max_parallel_workers_per_gather`默认为2，但实际可支持更高并行度",
+      "表大小约136GB（174386页 × 8KB），远超`min_parallel_table_scan_size`（8MB）",
+      "强制提升并行度至8，充分利用多核CPU"
+    ],
+    "hint_combination": "/*+ Parallel(partsupp 8) NoSeqScan(partsupp) HashJoin(partsupp supplier) */",
+    "expected_performance_benefit": "预计执行耗时下降20%-35%，核心收益来自并行加速`partsupp`的全表扫描，减少IO等待时间"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "强制哈希连接替代合并连接，避免外部排序与磁盘溢出",
+    "core_optimization_points": [
+      "主查询中`part`与`partsupp`连接使用`MergeJoin`，但`part`无索引排序，需排序后合并",
+      "`Sort Method: external merge  Disk: 292968kB`，表明排序溢出磁盘，性能严重下降",
+      "`partsupp`表无索引按`ps_partkey`排序，无法复用索引顺序",
+      "强制使用`HashJoin`，避免排序开销"
+    ],
+    "hint_combination": "/*+ NoMergeJoin(part partsupp) HashJoin(part partsupp) NoSort(part) NoSort(partsupp) */",
+    "expected_performance_benefit": "预计执行耗时下降30%-50%，核心收益来自消除外部排序与磁盘溢出，提升连接效率"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "使用`BitmapScan`替代`SeqScan`，提升多条件过滤效率",
+    "core_optimization_points": [
+      "`supplier`表通过`s_nationkey`过滤，`idx_supplier_nationkey`存在，但未被使用",
+      "当前使用`BitmapIndexScan`，但可进一步优化为`BitmapScan`以支持多索引组合",
+      "`part`表有`p_size`和`p_type`过滤，可考虑组合位图扫描",
+      "强制`BitmapScan`以减少随机IO"
+    ],
+    "hint_combination": "/*+ BitmapScan(supplier idx_supplier_nationkey) BitmapScan(part part_pkey) NoSeqScan(supplier) NoSeqScan(part) */",
+    "expected_performance_benefit": "预计执行耗时下降20%-30%，核心收益来自减少随机IO，尤其在`supplier`表回表时提升效率"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "校正`supplier`与`nation`连接后的中间结果集估计，避免错误连接顺序",
+    "core_optimization_points": [
+      "`supplier`表过滤后约20033行，`nation`表25行，连接后应为20033行",
+      "但优化器估计为20000，实际执行为20033，偏差小，但连接顺序错误导致后续膨胀",
+      "强制`supplier`与`nation`连接后结果集为20000，防止后续连接误判",
+      "通过`Rows` Hint校正连接组估计"
+    ],
+    "hint_combination": "/*+ Rows(supplier nation *1.0) Leading( (region (nation (supplier (part partsupp)))) ) */",
+    "expected_performance_benefit": "预计执行耗时下降15%-25%，核心收益来自防止优化器因估计偏差选择错误连接路径"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "强制`part`表使用`IndexOnlyScan`，若覆盖列存在，可完全避免回表",
+    "core_optimization_points": [
+      "`part`表查询仅需`p_partkey`、`p_mfgr`、`p_type`、`p_size`，但`part_pkey`索引仅包含`p_partkey`",
+      "无覆盖索引，无法实现`IndexOnlyScan`，但可优化为`IndexScan`",
+      "若未来添加`p_mfgr`、`p_type`、`p_size`为索引列，可实现覆盖扫描",
+      "当前仅强制`IndexScan`"
+    ],
+    "hint_combination": "/*+ IndexScan(part part_pkey) NoSeqScan(part) */",
+    "expected_performance_benefit": "预计执行耗时下降10%-20%，核心收益来自避免`part`表的回表操作"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "禁用`partsupp`的顺序扫描，强制使用主键索引扫描",
+    "core_optimization_points": [
+      "`partsupp`表无`ps_partkey`索引，但有主键`partsupp_pkey`（复合索引）",
+      "当前使用`SeqScan`扫描800万行，代价极高",
+      "强制使用`IndexScan`，利用主键索引快速定位连接行",
+      "避免全表扫描"
+    ],
+    "hint_combination": "/*+ IndexScan(partsupp partsupp_pkey) NoSeqScan(partsupp) */",
+    "expected_performance_benefit": "预计执行耗时下降40%-60%，核心收益来自将`partsupp`的全表扫描替换为索引扫描"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "调整`work_mem`参数，防止哈希连接与排序磁盘溢出",
+    "core_optimization_points": [
+      "`Sort Method: external merge  Disk: 292968kB`，表明排序溢出磁盘",
+      "`Hash Join`使用了32768个桶，但内存不足，需增加`work_mem`",
+      "当前`work_mem`默认64MB，建议提升至128MB或256MB",
+      "通过`Set`临时调整参数"
+    ],
+    "hint_combination": "/*+ Set(work_mem '128MB') NoSort(part) NoSort(partsupp) */",
+    "expected_performance_benefit": "预计执行耗时下降25%-40%，核心收益来自避免磁盘排序与哈希溢出，提升内存处理效率"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "强制`region`与`nation`使用嵌套循环连接，避免哈希连接开销",
+    "core_optimization_points": [
+      "`region`（5行）与`nation`（25行）连接后仅125行，规模极小",
+      "使用哈希连接代价过高，嵌套循环更优",
+      "当前优化器未选择嵌套循环，可能因代价模型误判",
+      "强制使用`NestLoop`"
+    ],
+    "hint_combination": "/*+ NestLoop(region nation) NoHashJoin(region nation) NoMergeJoin(region nation) */",
+    "expected_performance_benefit": "预计执行耗时下降10%-15%，核心收益来自避免对小表的哈希构建与哈希探测开销"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "使用`Memoize`缓存子查询结果，避免重复执行",
+    "core_optimization_points": [
+      "子查询执行6351次，每次扫描`region`、`nation`、`supplier`、`partsupp`",
+      "但`r_name = 'EUROPE'`固定，结果唯一",
+      "强制启用`Memoize`，将子查询结果缓存一次",
+      "避免重复扫描"
+    ],
+    "hint_combination": "/*+ Memoize(region nation) Memoize(supplier partsupp) */",
+    "expected_performance_benefit": "预计执行耗时下降50%-70%，核心收益来自将子查询从6351次降至1次"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "禁用`supplier`表的并行扫描，避免并行开销影响小表查询",
+    "core_optimization_points": [
+      "`supplier`表仅10万行，过滤后约2万行，无需并行",
+      "当前未启用并行，但若启用可能引入并行启动开销",
+      "强制禁用并行，确保小表查询高效"
+    ],
+    "hint_combination": "/*+ Parallel(supplier 0) NoParallel(supplier) */",
+    "expected_performance_benefit": "预计执行耗时下降5%-10%，核心收益来自避免不必要的并行管理开销"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "强制`part`表使用`IndexOnlyScan`（若未来添加覆盖列）",
+    "core_optimization_points": [
+      "若`part`表添加覆盖索引`idx_part_cover(p_partkey, p_mfgr, p_type, p_size)`，可实现仅索引扫描",
+      "当前无覆盖索引，但可为未来优化预留Hint",
+      "强制使用`IndexOnlyScan`，提示优化器优先考虑覆盖索引"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(part idx_part_cover) NoSeqScan(part) */",
+    "expected_performance_benefit": "预计执行耗时下降50%+（若未来添加覆盖索引），核心收益来自完全避免回表"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "调整`random_page_cost`参数，匹配SSD存储性能",
+    "core_optimization_points": [
+      "当前`random_page_cost=4.0`，适用于传统HDD",
+      "若为SSD环境，应下调至1.1~2.0",
+      "调整后，优化器更倾向使用索引扫描与哈希连接",
+      "提升索引扫描性价比"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.5) */",
+    "expected_performance_benefit": "预计执行耗时下降15%-25%，核心收益来自优化器更合理选择索引扫描路径"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "强制`partsupp`与`supplier`使用哈希连接，避免嵌套循环",
+    "core_optimization_points": [
+      "`partsupp`与`supplier`连接后结果集约160万行，规模大",
+      "当前使用`HashJoin`，但可进一步优化",
+      "强制使用`HashJoin`，避免`NestLoop`带来的高代价"
+    ],
+    "hint_combination": "/*+ HashJoin(partsupp supplier) NoNestLoop(partsupp supplier) */",
+    "expected_performance_benefit": "预计执行耗时下降20%-35%，核心收益来自避免对`supplier`的重复扫描"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "使用`Parallel`控制`part`表并行度，加速小表扫描",
+    "core_optimization_points": [
+      "`part`表过滤后仅约1571行，但当前使用并行扫描（5个worker）",
+      "并行度过高，可能引入额外开销",
+      "强制并行度为1，确保小表扫描高效"
+    ],
+    "hint_combination": "/*+ Parallel(part 1) */",
+    "expected_performance_benefit": "预计执行耗时下降5%-10%，核心收益来自避免小表并行带来的资源竞争"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "禁用`region`表的并行扫描，避免小表并行开销",
+    "core_optimization_points": [
+      "`region`表仅5行，无需并行",
+      "当前未启用并行，但可显式禁用以确保一致性",
+      "避免优化器误判"
+    ],
+    "hint_combination": "/*+ Parallel(region 0) */",
+    "expected_performance_benefit": "预计执行耗时下降1%-5%，核心收益来自避免不必要的并行控制"
+  }
+]
+```

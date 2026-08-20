@@ -1,0 +1,287 @@
+{
+  "sql_info": {
+    "original_sql": "",
+    "schema": "public",
+    "extracted_tables": [
+      {
+        "table_name": "supplier",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "nation",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "partsupp",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "part",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "lineitem",
+        "schema_name": "public",
+        "alias": null
+      }
+    ]
+  },
+  "tables": {
+    "public.supplier": {
+      "table_metadata": {
+        "relname": "supplier",
+        "relnamespace": "public",
+        "reltuples": 100000,
+        "relpages": 2216,
+        "relallvisible": 2216
+      },
+      "indexes": [
+        {
+          "index_name": "idx_supplier_nationkey",
+          "index_type": "btree",
+          "index_columns": [
+            "s_nationkey"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "supplier_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "s_suppkey"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "s_address": {
+          "attname": "s_address",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "s_name": {
+          "attname": "s_name",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "s_nationkey": {
+          "attname": "s_nationkey",
+          "n_distinct": 25.0,
+          "null_frac": 0.0
+        },
+        "s_suppkey": {
+          "attname": "s_suppkey",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.nation": {
+      "table_metadata": {
+        "relname": "nation",
+        "relnamespace": "public",
+        "reltuples": 25,
+        "relpages": 1,
+        "relallvisible": 1
+      },
+      "indexes": [
+        {
+          "index_name": "nation_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "n_nationkey"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "n_name": {
+          "attname": "n_name",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "n_nationkey": {
+          "attname": "n_nationkey",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.partsupp": {
+      "table_metadata": {
+        "relname": "partsupp",
+        "relnamespace": "public",
+        "reltuples": 7999655,
+        "relpages": 174386,
+        "relallvisible": 174386
+      },
+      "indexes": [
+        {
+          "index_name": "partsupp_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "ps_partkey",
+            "ps_suppkey"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "ps_availqty": {
+          "attname": "ps_availqty",
+          "n_distinct": 10016.0,
+          "null_frac": 0.0
+        },
+        "ps_partkey": {
+          "attname": "ps_partkey",
+          "n_distinct": 458216.0,
+          "null_frac": 0.0
+        },
+        "ps_suppkey": {
+          "attname": "ps_suppkey",
+          "n_distinct": 99605.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.part": {
+      "table_metadata": {
+        "relname": "part",
+        "relnamespace": "public",
+        "reltuples": 1999991,
+        "relpages": 40962,
+        "relallvisible": 40962
+      },
+      "indexes": [
+        {
+          "index_name": "idx_part_brand",
+          "index_type": "btree",
+          "index_columns": [
+            "p_brand"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "part_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "p_partkey"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "p_name": {
+          "attname": "p_name",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "p_partkey": {
+          "attname": "p_partkey",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.lineitem": {
+      "table_metadata": {
+        "relname": "lineitem",
+        "relnamespace": "public",
+        "reltuples": 59990640,
+        "relpages": 1124542,
+        "relallvisible": 1124542
+      },
+      "indexes": [
+        {
+          "index_name": "idx_lineitem_orderkey",
+          "index_type": "btree",
+          "index_columns": [
+            "l_orderkey"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "idx_lineitem_partkey",
+          "index_type": "btree",
+          "index_columns": [
+            "l_partkey"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "idx_lineitem_shipdate",
+          "index_type": "btree",
+          "index_columns": [
+            "l_shipdate"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "idx_lineitem_suppkey",
+          "index_type": "btree",
+          "index_columns": [
+            "l_suppkey"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "lineitem_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "l_orderkey",
+            "l_linenumber"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "l_partkey": {
+          "attname": "l_partkey",
+          "n_distinct": 2027227.0,
+          "null_frac": 0.0
+        },
+        "l_quantity": {
+          "attname": "l_quantity",
+          "n_distinct": 50.0,
+          "null_frac": 0.0
+        },
+        "l_shipdate": {
+          "attname": "l_shipdate",
+          "n_distinct": 2516.0,
+          "null_frac": 0.0
+        },
+        "l_suppkey": {
+          "attname": "l_suppkey",
+          "n_distinct": 101515.0,
+          "null_frac": 0.0
+        }
+      }
+    }
+  }
+}

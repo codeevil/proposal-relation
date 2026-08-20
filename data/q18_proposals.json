@@ -1,0 +1,244 @@
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "修正核心子查询行数估计偏差，强制使用并行哈希聚合与高效连接顺序，消除嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正lineitem子查询中聚合结果的行数估计，原估计133296行，实际仅624行，偏差超过200倍，需乘以0.0047校正",
+      "强制子查询使用并行哈希聚合（Gather + Partial HashAggregate），提升聚合效率",
+      "调整连接顺序为lineitem → orders → customer，使大表先被过滤，中间结果集最小化",
+      "强制lineitem与orders使用HashJoin，替代低效的Nested Loop连接"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.0047) Leading( (lineitem orders customer) ) HashJoin(lineitem orders) HashJoin(lineitem orders customer) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计降低执行耗时65%-80%，核心收益来自消除嵌套循环对orders的624次重复扫描，通过并行聚合与哈希连接大幅缩短子查询时间"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "强制仅索引扫描优化orders表访问，避免回表IO，同时优化连接顺序以减少中间结果膨胀",
+    "core_optimization_points": [
+      "强制orders表使用idx_orders_custkey索引进行仅索引扫描，避免回表读取完整行",
+      "调整连接顺序为customer → orders → lineitem，将小表customer作为驱动表，控制中间结果增长",
+      "强制customer与orders使用MergeJoin，复用idx_orders_custkey的排序特性",
+      "提升lineitem表并行度至4，加速大表扫描"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(orders idx_orders_custkey) Leading( (customer orders lineitem) ) MergeJoin(customer orders) HashJoin(orders lineitem) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计降低执行耗时55%-70%，核心收益来自避免orders表的回表IO（约1500万行），并利用索引排序减少排序开销"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "重构子查询执行路径，使用索引扫描替代全表扫描，提前过滤大表数据，降低整体数据量",
+    "core_optimization_points": [
+      "强制lineitem子查询使用idx_lineitem_orderkey索引扫描，避免对lineitem的全表扫描",
+      "将子查询从聚合后过滤改为先过滤再聚合，减少处理数据量",
+      "强制子查询结果与orders表使用HashJoin，避免嵌套循环的高开销",
+      "提升orders表并行度至4，加速大表扫描"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem lineitem_pkey) Leading( (lineitem orders customer) ) HashJoin(lineitem orders) HashJoin(orders customer) Parallel(orders 4) */",
+    "expected_performance_benefit": "预计降低执行耗时50%-65%，核心收益来自将lineitem子查询从全表扫描转为索引扫描，减少处理数据量达90%以上"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "通过Rows Hint校正优化器对中间结果集的严重低估，强制使用哈希连接与并行执行，提升大表连接效率",
+    "core_optimization_points": [
+      "校正customer与orders连接后的中间结果集估计，原估计133296行，实际624行，偏差214倍，乘以0.0047校正",
+      "强制customer与orders使用HashJoin，替代低效的MergeJoin + Sort",
+      "强制orders与lineitem使用HashJoin，避免嵌套循环的循环开销",
+      "提升lineitem表并行度至8，充分利用多核资源"
+    ],
+    "hint_combination": "/*+ Rows(customer orders *0.0047) HashJoin(customer orders) HashJoin(orders lineitem) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计降低执行耗时55%-70%，核心收益来自修正优化器对连接结果集的严重误判，避免错误的嵌套循环与排序路径"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "利用覆盖索引实现仅索引扫描，完全避免回表，同时调整连接顺序以最大化索引复用",
+    "core_optimization_points": [
+      "强制orders表使用idx_orders_custkey索引进行仅索引扫描，覆盖所有查询列",
+      "调整连接顺序为customer → orders → lineitem，使索引排序结果被复用",
+      "强制customer与orders使用MergeJoin，复用索引排序特性，避免额外排序",
+      "禁用lineitem的并行扫描，避免小表并行开销"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(orders idx_orders_custkey) Leading( (customer orders lineitem) ) MergeJoin(customer orders) NoParallel(lineitem) */",
+    "expected_performance_benefit": "预计降低执行耗时45%-60%，核心收益来自完全消除orders表的回表IO，仅索引扫描可将IO成本降低60%以上"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "强制使用位图扫描加速lineitem大表过滤，减少随机IO，提升扫描效率",
+    "core_optimization_points": [
+      "强制lineitem表使用BitmapScan，结合idx_lineitem_orderkey索引进行位图扫描",
+      "调整连接顺序为lineitem → orders → customer，使大表先被过滤",
+      "强制lineitem与orders使用HashJoin，避免嵌套循环的高开销",
+      "提升lineitem表并行度至4，加速位图构建"
+    ],
+    "hint_combination": "/*+ BitmapScan(lineitem idx_lineitem_orderkey) Leading( (lineitem orders customer) ) HashJoin(lineitem orders) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自位图扫描减少随机IO，尤其在高选择性过滤下优势显著"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "优化子查询执行策略，使用并行哈希聚合与覆盖索引，实现高效数据过滤",
+    "core_optimization_points": [
+      "强制lineitem子查询使用并行哈希聚合（Gather + Partial HashAggregate）",
+      "强制lineitem使用idx_lineitem_orderkey索引进行仅索引扫描，避免回表",
+      "调整连接顺序为lineitem → orders → customer，使过滤结果尽早传递",
+      "强制lineitem与orders使用HashJoin，避免嵌套循环"
+    ],
+    "hint_combination": "/*+ Parallel(lineitem 4) IndexOnlyScan(lineitem idx_lineitem_orderkey) Leading( (lineitem orders customer) ) HashJoin(lineitem orders) */",
+    "expected_performance_benefit": "预计降低执行耗时50%-65%，核心收益来自并行聚合与仅索引扫描的组合，显著提升子查询性能"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "通过Set Hint降低随机页代价，匹配SSD性能，优化哈希连接与索引扫描代价模型",
+    "core_optimization_points": [
+      "设置random_page_cost为1.1，匹配SSD存储的随机读性能，降低哈希连接与索引扫描代价",
+      "强制orders表使用idx_orders_custkey索引进行仅索引扫描",
+      "调整连接顺序为customer → orders → lineitem，控制中间结果增长",
+      "强制customer与orders使用MergeJoin，复用索引排序"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.1) IndexOnlyScan(orders idx_orders_custkey) Leading( (customer orders lineitem) ) MergeJoin(customer orders) */",
+    "expected_performance_benefit": "预计降低执行耗时35%-50%，核心收益来自代价模型更贴合硬件特性，使优化器更倾向选择哈希连接与索引扫描"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "强制使用Memoize缓存优化嵌套循环连接，避免重复扫描内表，提升查询效率",
+    "core_optimization_points": [
+      "强制customer与orders使用NestLoop连接，并启用Memoize缓存，复用相同c_custkey的orders结果",
+      "调整连接顺序为customer → orders → lineitem，使驱动表小且重复值多",
+      "强制lineitem使用idx_lineitem_orderkey索引扫描，减少回表开销",
+      "提升orders表并行度至4，加速大表扫描"
+    ],
+    "hint_combination": "/*+ NestLoop(customer orders) Memoize(customer orders) Leading( (customer orders lineitem) ) IndexScan(orders idx_orders_custkey) Parallel(orders 4) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自Memoize缓存避免对orders的重复扫描，尤其在customer有大量重复c_custkey时效果显著"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "通过Rows Hint校正子查询聚合结果估计，强制使用并行哈希连接与高效扫描路径",
+    "core_optimization_points": [
+      "校正lineitem子查询聚合结果行数估计，乘以0.0047修正严重低估",
+      "强制lineitem与orders使用并行哈希连接，提升大表连接效率",
+      "强制lineitem使用idx_lineitem_orderkey索引扫描，避免全表扫描",
+      "提升orders表并行度至4，加速大表扫描"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.0047) Parallel(lineitem 4) Parallel(orders 4) HashJoin(lineitem orders) IndexScan(lineitem idx_lineitem_orderkey) */",
+    "expected_performance_benefit": "预计降低执行耗时50%-65%，核心收益来自修正估计偏差并行化连接，避免嵌套循环的高开销"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "优化连接顺序，将小表customer作为驱动表，强制使用哈希连接，避免中间结果膨胀",
+    "core_optimization_points": [
+      "调整连接顺序为customer → orders → lineitem，使小表作为驱动表",
+      "强制customer与orders使用HashJoin，避免嵌套循环的高开销",
+      "强制orders与lineitem使用HashJoin，避免嵌套循环",
+      "提升lineitem表并行度至4，加速大表扫描"
+    ],
+    "hint_combination": "/*+ Leading( (customer orders lineitem) ) HashJoin(customer orders) HashJoin(orders lineitem) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计降低执行耗时45%-60%，核心收益来自控制中间结果集增长，避免早期连接产生超大结果"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "强制使用覆盖索引进行仅索引扫描，完全避免回表，同时优化连接方法以减少排序开销",
+    "core_optimization_points": [
+      "强制orders表使用idx_orders_custkey索引进行仅索引扫描，覆盖所有查询列",
+      "强制customer与orders使用MergeJoin，复用索引排序结果",
+      "调整连接顺序为customer → orders → lineitem，控制中间结果增长",
+      "提升lineitem表并行度至4，加速大表扫描"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(orders idx_orders_custkey) Leading( (customer orders lineitem) ) MergeJoin(customer orders) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自完全消除回表IO，仅索引扫描可将IO成本降低60%以上"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "通过Set Hint提升work_mem，避免哈希与排序磁盘溢出，提升大操作性能",
+    "core_optimization_points": [
+      "设置work_mem为256MB，避免哈希与排序操作磁盘溢出",
+      "强制lineitem子查询使用并行哈希聚合，提升聚合效率",
+      "调整连接顺序为lineitem → orders → customer，使大表先被过滤",
+      "强制lineitem与orders使用HashJoin"
+    ],
+    "hint_combination": "/*+ Set(work_mem '256MB') Parallel(lineitem 4) Leading( (lineitem orders customer) ) HashJoin(lineitem orders) */",
+    "expected_performance_benefit": "预计降低执行耗时45%-60%，核心收益来自避免磁盘溢出，哈希与排序操作全部在内存中完成"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "强制使用位图扫描与并行执行，提升大表过滤效率，减少随机IO开销",
+    "core_optimization_points": [
+      "强制lineitem表使用BitmapScan结合idx_lineitem_orderkey索引",
+      "提升lineitem表并行度至8，加速位图构建",
+      "调整连接顺序为lineitem → orders → customer，使过滤尽早发生",
+      "强制lineitem与orders使用HashJoin"
+    ],
+    "hint_combination": "/*+ BitmapScan(lineitem idx_lineitem_orderkey) Parallel(lineitem 8) Leading( (lineitem orders customer) ) HashJoin(lineitem orders) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自位图扫描减少随机IO，尤其在高选择性过滤下优势显著"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "优化子查询执行路径，使用索引扫描与并行聚合，提升聚合效率",
+    "core_optimization_points": [
+      "强制lineitem子查询使用idx_lineitem_orderkey索引扫描",
+      "强制子查询使用并行哈希聚合（Gather + Partial HashAggregate）",
+      "调整连接顺序为lineitem → orders → customer，使过滤尽早发生",
+      "强制lineitem与orders使用HashJoin"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_orderkey) Parallel(lineitem 4) Leading( (lineitem orders customer) ) HashJoin(lineitem orders) */",
+    "expected_performance_benefit": "预计降低执行耗时50%-65%，核心收益来自索引扫描与并行聚合的组合，显著提升子查询性能"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "通过Rows Hint校正优化器对驱动表规模的误判，强制使用哈希连接，避免嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正orders表行数估计，乘以0.1修正严重低估",
+      "强制customer与orders使用HashJoin，替代嵌套循环",
+      "调整连接顺序为customer → orders → lineitem，控制中间结果增长",
+      "提升lineitem表并行度至4，加速大表扫描"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) HashJoin(customer orders) Leading( (customer orders lineitem) ) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计降低执行耗时50%-65%，核心收益来自修正优化器对驱动表规模的误判，避免嵌套循环的高开销"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "强制使用仅索引扫描与合并连接，复用索引排序，避免额外排序开销",
+    "core_optimization_points": [
+      "强制orders表使用idx_orders_custkey索引进行仅索引扫描",
+      "强制customer与orders使用MergeJoin，复用索引排序结果",
+      "调整连接顺序为customer → orders → lineitem，控制中间结果增长",
+      "提升orders表并行度至4，加速大表扫描"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(orders idx_orders_custkey) MergeJoin(customer orders) Leading( (customer orders lineitem) ) Parallel(orders 4) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自避免额外排序，合并连接复用索引排序"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "通过Set Hint提升并行度上限，启用更多Worker，加速大表扫描与聚合",
+    "core_optimization_points": [
+      "设置max_parallel_workers_per_gather为8，提升并行度上限",
+      "强制lineitem使用并行哈希聚合与扫描",
+      "调整连接顺序为lineitem → orders → customer，使大表先被过滤",
+      "强制lineitem与orders使用HashJoin"
+    ],
+    "hint_combination": "/*+ Set(max_parallel_workers_per_gather 8) Parallel(lineitem 8) Leading( (lineitem orders customer) ) HashJoin(lineitem orders) */",
+    "expected_performance_benefit": "预计降低执行耗时45%-60%，核心收益来自启用更多并行Worker，充分利用多核资源"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "强制使用位图扫描与合并连接，结合索引排序，实现高效数据访问",
+    "core_optimization_points": [
+      "强制lineitem表使用BitmapScan结合idx_lineitem_orderkey索引",
+      "强制customer与orders使用MergeJoin，复用索引排序",
+      "调整连接顺序为customer → orders → lineitem，控制中间结果增长",
+      "提升lineitem表并行度至4，加速位图构建"
+    ],
+    "hint_combination": "/*+ BitmapScan(lineitem idx_lineitem_orderkey) MergeJoin(customer orders) Leading( (customer orders lineitem) ) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自位图扫描减少随机IO，合并连接复用索引排序"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "通过Rows Hint校正子查询结果集估计，强制使用并行哈希连接与覆盖索引扫描",
+    "core_optimization_points": [
+      "校正lineitem子查询聚合结果行数估计，乘以0.0047修正严重低估",
+      "强制lineitem与orders使用并行哈希连接",
+      "强制orders表使用idx_orders_custkey索引进行仅索引扫描",
+      "调整连接顺序为customer → orders → lineitem，控制中间结果增长"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.0047) HashJoin(lineitem orders) IndexOnlyScan(orders idx_orders_custkey) Leading( (customer orders lineitem) ) */",
+    "expected_performance_benefit": "预计降低执行耗时50%-65%，核心收益来自修正估计偏差、并行连接与仅索引扫描的组合优化"
+  }
+]
+```

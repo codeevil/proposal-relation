@@ -1,0 +1,244 @@
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "修正严重行数估计偏差，强制优化连接顺序并使用哈希连接，消除嵌套循环的指数级开销",
+    "core_optimization_points": [
+      "校正lineitem与supplier连接后中间结果集的行数估计（实际29182行，估计仅35247行，偏差约1.5倍，但因后续过滤导致实际被移除近一半，需校正）",
+      "调整连接顺序为nation→supplier→lineitem→orders→customer，将小表nation作为最外层驱动表，避免大表提前膨胀",
+      "强制supplier与lineitem使用HashJoin，替代低效的Nested Loop（原计划中lineitem通过索引扫描但被嵌套循环驱动，导致8010次循环）",
+      "强制lineitem与orders使用HashJoin，避免因orders未被提前过滤而造成大表连接开销"
+    ],
+    "hint_combination": "/*+ Rows(lineitem supplier *0.8) Leading( (n1 (supplier (lineitem (orders customer)))) ) HashJoin(supplier lineitem) HashJoin(lineitem orders) */",
+    "expected_performance_benefit": "预计降低执行耗时60%-80%，核心收益来自消除Nested Loop对lineitem的8010次重复扫描，哈希连接将连接代价从O(n²)降至O(n)，同时减少排序与并行开销"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "强制使用仅索引扫描覆盖关键路径，消除回表IO，提升大表扫描效率",
+    "core_optimization_points": [
+      "强制customer表使用idx_customer_nationkey索引进行仅索引扫描，避免回表读取全行数据",
+      "强制orders表使用idx_orders_custkey索引进行仅索引扫描，覆盖所有查询列（o_custkey, o_orderkey）",
+      "将nation表的n_name过滤提前至索引扫描阶段，利用n_name在nation_pkey中可被索引扫描覆盖",
+      "强制lineitem使用idx_lineitem_shipdate进行索引扫描，避免全表扫描"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(customer idx_customer_nationkey) IndexOnlyScan(orders idx_orders_custkey) IndexScan(nation n1) IndexScan(lineitem idx_lineitem_shipdate) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自消除customer和orders的回表IO，减少随机读次数，尤其在高并发场景下优势显著"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "重构连接顺序为灌木树结构，先聚合nation与supplier，再连接lineitem，避免中间结果膨胀",
+    "core_optimization_points": [
+      "使用灌木树写法强制先连接nation与supplier，形成小结果集（仅2行×50000行=10万行）",
+      "将lineitem与该子结果集连接，避免lineitem被嵌套循环驱动多次",
+      "在lineitem与orders之间使用HashJoin，避免因orders未被提前过滤导致的连接膨胀",
+      "启用Parallel(lineitem 4)提升大表扫描并行度"
+    ],
+    "hint_combination": "/*+ Leading( (n1 (supplier lineitem)) (orders customer) ) HashJoin(lineitem orders) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计降低执行耗时50%-70%，核心收益来自将nation与supplier的连接提前聚合，减少lineitem的驱动次数，同时并行加速扫描"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "强制使用合并连接复用排序，避免重复排序开销，提升聚合性能",
+    "core_optimization_points": [
+      "强制customer与orders使用MergeJoin，利用idx_orders_custkey索引天然有序特性",
+      "强制lineitem与orders使用MergeJoin，若l_shipdate有索引可复用排序",
+      "将n1与supplier的连接改为MergeJoin，利用s_nationkey与n_nationkey的有序性",
+      "禁用Sort节点，通过MergeJoin复用连接键排序"
+    ],
+    "hint_combination": "/*+ MergeJoin(customer orders) MergeJoin(lineitem orders) MergeJoin(supplier n1) NoSort() */",
+    "expected_performance_benefit": "预计降低执行耗时35%-50%，核心收益来自消除Sort节点（原计划耗时5208ms），合并连接复用索引排序，减少内存与磁盘排序开销"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "校正优化器对nation过滤结果的估计偏差，强制使用位图扫描提升过滤效率",
+    "core_optimization_points": [
+      "nation表n_name过滤选择性极低（仅2/25），但优化器估计为2行，实际正确，无需校正",
+      "但因n_name在nation_pkey中无独立索引，导致SeqScan无法优化，强制使用IndexScan",
+      "使用BitmapScan强制对nation表进行位图扫描，提升多条件过滤效率",
+      "在lineitem上使用BitmapScan结合l_shipdate与l_suppkey条件"
+    ],
+    "hint_combination": "/*+ IndexScan(nation n1) BitmapScan(nation n1) BitmapScan(lineitem idx_lineitem_shipdate) */",
+    "expected_performance_benefit": "预计降低执行耗时25%-40%，核心收益来自减少nation表的顺序扫描开销，位图扫描在多条件组合时效率更高"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "禁用嵌套循环连接，强制哈希连接，解决因驱动表估计偏差导致的性能灾难",
+    "core_optimization_points": [
+      "原计划中lineitem通过idx_lineitem_suppkey被索引扫描，但被嵌套循环驱动8010次，实际应为大表连接",
+      "强制禁止NestLoop，避免低效循环",
+      "强制supplier与lineitem使用HashJoin，即使索引存在也优先哈希连接",
+      "提升lineitem并行度至4，加速大表扫描"
+    ],
+    "hint_combination": "/*+ NoNestLoop(supplier lineitem) NoNestLoop(lineitem orders) HashJoin(supplier lineitem) HashJoin(lineitem orders) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计降低执行耗时55%-75%，核心收益来自彻底消除嵌套循环的重复扫描，哈希连接将连接代价从O(n×m)降至O(n+m)"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "通过Rows Hint校正中间结果集估计偏差，强制优化器选择更优连接顺序",
+    "core_optimization_points": [
+      "原计划中lineitem与orders连接后估计行数为35247，实际为29182，偏差约1.2倍，但因Join Filter移除29324行，说明估计严重失准",
+      "使用Rows Hint强制将lineitem与orders连接后的估计行数乘以0.6，修正低估问题",
+      "结合Leading Hint强制连接顺序为nation→supplier→lineitem→customer→orders",
+      "禁用并行扫描以避免资源争用"
+    ],
+    "hint_combination": "/*+ Rows(lineitem orders *0.6) Leading( (n1 (supplier (lineitem (customer orders)))) ) NoParallel(lineitem) NoParallel(orders) */",
+    "expected_performance_benefit": "预计降低执行耗时45%-60%，核心收益来自修正优化器对连接结果的误判，使其选择更优路径，避免错误的嵌套循环"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "优化并行执行策略，合理分配并行度，避免过度并行导致资源争用",
+    "core_optimization_points": [
+      "原计划中lineitem与orders连接使用Parallel Hash Join，但workers launched为1，说明未启用并行",
+      "强制lineitem表启用4个并行worker，提升扫描效率",
+      "将orders表并行度设为2，避免大表连接时并行度过高导致内存溢出",
+      "设置work_mem为256MB，避免哈希表磁盘溢出"
+    ],
+    "hint_combination": "/*+ Parallel(lineitem 4) Parallel(orders 2) Set(work_mem '256MB') */",
+    "expected_performance_benefit": "预计降低执行耗时30%-50%，核心收益来自合理并行化大表扫描，提升CPU利用率，避免单线程瓶颈"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "强制使用Memoize缓存，复用customer→orders连接结果，减少重复查询",
+    "core_optimization_points": [
+      "customer表被多次用于驱动orders连接，实际c_custkey在customer中唯一，但未启用Memoize",
+      "强制启用Memoize缓存，避免对相同c_custkey重复扫描orders",
+      "结合NestLoop使用，提升嵌套循环效率",
+      "在customer与orders之间使用Memoize"
+    ],
+    "hint_combination": "/*+ Memoize(customer orders) NestLoop(customer orders) */",
+    "expected_performance_benefit": "预计降低执行耗时20%-35%，核心收益来自复用orders的扫描结果，避免对相同c_custkey的重复访问"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "重构连接顺序为左深树结构，将小表nation作为最外层驱动表，控制中间结果增长",
+    "core_optimization_points": [
+      "nation表仅2行，应作为最外层驱动表",
+      "强制连接顺序为nation→supplier→lineitem→orders→customer，形成左深树",
+      "避免lineitem与orders在早期连接，防止大表膨胀",
+      "在lineitem上使用IndexScan，避免全表扫描"
+    ],
+    "hint_combination": "/*+ Leading( (n1 supplier lineitem orders customer) ) IndexScan(lineitem idx_lineitem_suppkey) */",
+    "expected_performance_benefit": "预计降低执行耗时35%-50%，核心收益来自控制中间结果集增长，避免早期连接产生超大中间结果"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "强制使用覆盖索引，避免回表，提升大表扫描效率",
+    "core_optimization_points": [
+      "检查lineitem表是否包含l_shipdate、l_suppkey、l_orderkey、l_extendedprice、l_discount所有列",
+      "若存在覆盖索引（如idx_lineitem_covering），强制使用IndexOnlyScan",
+      "若无，建议创建覆盖索引",
+      "在orders表上强制使用idx_orders_custkey仅索引扫描"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(lineitem idx_lineitem_covering) IndexOnlyScan(orders idx_orders_custkey) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-60%，核心收益来自消除回表IO，尤其在高并发场景下优势显著"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "禁用哈希连接，强制使用合并连接，复用索引排序，避免哈希表内存溢出",
+    "core_optimization_points": [
+      "原计划中哈希表占用91936kB，接近内存上限，可能溢出磁盘",
+      "强制使用MergeJoin替代HashJoin，复用索引排序",
+      "在lineitem与orders之间使用MergeJoin，若l_shipdate与o_orderdate有序",
+      "禁用HashJoin避免内存溢出风险"
+    ],
+    "hint_combination": "/*+ NoHashJoin(lineitem orders) NoHashJoin(customer orders) MergeJoin(lineitem orders) MergeJoin(customer orders) */",
+    "expected_performance_benefit": "预计降低执行耗时30%-45%，核心收益来自避免哈希表磁盘溢出，提升稳定性"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "调整代价模型参数，匹配SSD存储环境，降低随机读代价",
+    "core_optimization_points": [
+      "当前random_page_cost为4.0，适用于HDD，SSD应设为1.1~2.0",
+      "设置random_page_cost为1.1，使优化器更倾向于索引扫描",
+      "降低seq_page_cost为0.8，匹配SSD顺序读性能",
+      "提升cpu_tuple_cost为0.02，反映现代CPU性能"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.1) Set(seq_page_cost 0.8) Set(cpu_tuple_cost 0.02) */",
+    "expected_performance_benefit": "预计降低执行耗时20%-30%，核心收益来自优化器更合理地选择索引扫描路径"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "强制使用位图扫描结合多索引，提升过滤效率",
+    "core_optimization_points": [
+      "lineitem表l_shipdate与l_suppkey均有索引，可使用BitmapAnd",
+      "强制使用BitmapScan结合两个索引条件",
+      "避免因索引选择性低导致的全表扫描",
+      "在supplier表上使用BitmapScan结合s_nationkey"
+    ],
+    "hint_combination": "/*+ BitmapScan(lineitem idx_lineitem_shipdate) BitmapScan(lineitem idx_lineitem_suppkey) BitmapAnd() */",
+    "expected_performance_benefit": "预计降低执行耗时25%-40%，核心收益来自减少随机IO，提升多条件过滤效率"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "强制使用顺序扫描替代索引扫描，避免小表索引扫描开销",
+    "core_optimization_points": [
+      "nation表仅25行，索引扫描开销高于顺序扫描",
+      "强制nation使用SeqScan，避免索引扫描的随机读开销",
+      "在supplier表上强制使用SeqScan，若s_nationkey选择性低",
+      "提升seq_page_cost以反映顺序读优势"
+    ],
+    "hint_combination": "/*+ SeqScan(nation) SeqScan(supplier) Set(seq_page_cost 0.8) */",
+    "expected_performance_benefit": "预计降低执行耗时15%-25%，核心收益来自避免小表索引扫描的随机读开销"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "调整连接顺序为先连接nation与customer，再连接orders，减少中间结果集",
+    "core_optimization_points": [
+      "nation与customer通过n_nationkey连接，结果集小",
+      "强制连接顺序为n1→n2→customer→orders→lineitem",
+      "避免lineitem与orders在早期连接",
+      "在customer与orders之间使用MergeJoin"
+    ],
+    "hint_combination": "/*+ Leading( (n1 (n2 customer)) (orders lineitem) ) MergeJoin(customer orders) */",
+    "expected_performance_benefit": "预计降低执行耗时30%-45%，核心收益来自控制中间结果集增长，避免早期连接膨胀"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "强制使用Memoize缓存，复用lineitem与supplier连接结果",
+    "core_optimization_points": [
+      "supplier表被多次用于驱动lineitem连接",
+      "强制启用Memoize，复用相同s_suppkey的lineitem扫描结果",
+      "在supplier与lineitem之间使用Memoize",
+      "结合NestLoop使用"
+    ],
+    "hint_combination": "/*+ Memoize(supplier lineitem) NestLoop(supplier lineitem) */",
+    "expected_performance_benefit": "预计降低执行耗时20%-35%，核心收益来自复用lineitem的扫描结果，避免重复访问"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "校正lineitem与orders连接后的行数估计，强制优化器选择更优路径",
+    "core_optimization_points": [
+      "实际连接后行数为29182，估计为35247，偏差约1.2倍",
+      "使用Rows Hint强制将估计行数乘以0.8",
+      "结合Leading Hint调整连接顺序",
+      "禁用并行扫描以避免资源争用"
+    ],
+    "hint_combination": "/*+ Rows(lineitem orders *0.8) Leading( (n1 (supplier (lineitem (orders customer)))) ) NoParallel(lineitem) */",
+    "expected_performance_benefit": "预计降低执行耗时35%-50%，核心收益来自修正优化器对连接结果的误判，使其选择更优路径"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "强制使用覆盖索引，避免回表，提升聚合性能",
+    "core_optimization_points": [
+      "在lineitem表上创建覆盖索引：(l_shipdate, l_suppkey, l_orderkey, l_extendedprice, l_discount)",
+      "强制使用IndexOnlyScan",
+      "在orders表上强制使用idx_orders_custkey仅索引扫描",
+      "避免回表IO"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(lineitem idx_lineitem_covering) IndexOnlyScan(orders idx_orders_custkey) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-60%，核心收益来自消除回表IO，提升大表扫描效率"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "禁用并行扫描，避免资源争用，提升稳定性",
+    "core_optimization_points": [
+      "原计划中并行度为1，但实际worker launched为1，说明未启用并行",
+      "强制禁用所有表的并行扫描，避免资源争用",
+      "提升work_mem至256MB，避免内存溢出",
+      "设置max_parallel_workers_per_gather为0"
+    ],
+    "hint_combination": "/*+ NoParallel(lineitem) NoParallel(orders) NoParallel(customer) NoParallel(supplier) Set(work_mem '256MB') Set(max_parallel_workers_per_gather 0) */",
+    "expected_performance_benefit": "预计降低执行耗时15%-25%，核心收益来自避免并行资源争用，提升执行稳定性"
+  }
+]
+```

@@ -1,0 +1,224 @@
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "强制使用索引扫描过滤 l_shipdate，消除全表扫描瓶颈，显著降低数据读取量",
+    "core_optimization_points": [
+      "识别 l_shipdate 列存在 B-tree 索引，且过滤选择性高（约 2516 / 5999万 ≈ 0.0042%），应优先使用索引扫描",
+      "原计划为 Parallel Seq Scan，实际扫描行数达 1182万，远超合理范围，需强制走索引",
+      "使用 IndexScan 强制命中 idx_lineitem_shipdate，避免全表扫描带来的顺序 IO 压力",
+      "结合 Rows Hint 校正中间结果集估计偏差，提升优化器对连接路径判断准确性"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *0.0042) Leading( (lineitem) ) */",
+    "expected_performance_benefit": "预计执行耗时降低 60%-80%，核心收益来自将 112万页顺序扫描转为索引扫描，减少 99% 以上 IO 开销，同时修正优化器对过滤后行数的高估"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "将扫描方法由顺序扫描转为仅索引扫描，利用覆盖索引避免回表开销",
+    "core_optimization_points": [
+      "确认 lineitem 表中 l_returnflag、l_linestatus、l_shipdate、l_quantity、l_extendedprice、l_discount、l_tax 均为查询所需列",
+      "当前索引 idx_lineitem_shipdate 仅包含 l_shipdate，无法覆盖全部列，但可结合其他索引或调整结构",
+      "由于无完全覆盖索引，无法直接使用 IndexOnlyScan，但可强制 IndexScan 提前过滤，再进行聚合",
+      "通过 Rows Hint 修正过滤后行数估计，防止优化器误判连接代价"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *0.0042) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计耗时下降 50%-70%，主要收益来自减少随机 IO 次数，加速数据过滤，提升并行扫描效率"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "强制启用并行扫描并提升并行度至 8，充分利用多核 CPU 加速大表过滤",
+    "core_optimization_points": [
+      "EXPLAIN 显示 Workers Launched: 4，但表大小为 112万页（约 8.7GB），远超 min_parallel_table_scan_size（默认 8MB）",
+      "当前并行度仅 4，未充分利用服务器资源，存在性能瓶颈",
+      "将并行度提升至 8，可更高效分摊扫描与聚合任务",
+      "结合 IndexScan 提高并行扫描效率，避免单线程瓶颈"
+    ],
+    "hint_combination": "/*+ Parallel(lineitem 8) IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *0.0042) */",
+    "expected_performance_benefit": "预计执行时间减少 35%-50%，核心收益来自并行扫描加速数据读取，尤其在高并发环境下表现更优"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "修正优化器对过滤后行数的严重高估，避免错误连接路径决策",
+    "core_optimization_points": [
+      "优化器估计行数为 1476万，实际仅 1182万，偏差约 23%，但结合统计信息可精确计算真实选择性",
+      "l_shipdate 有 2516 个唯一值，总行数 5999万，过滤条件为 ≤ '1998-09-02'，假设均匀分布，估计行数 ≈ 5999万 × (1/2516) ≈ 23838 行",
+      "实际执行中扫描 1182万行，说明统计信息严重失准，或数据分布不均",
+      "使用 Rows Hint 直接修正估计值，引导优化器选择更优连接路径"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.0004) IndexScan(lineitem idx_lineitem_shipdate) Leading( (lineitem) ) */",
+    "expected_performance_benefit": "预计执行时间下降 40%-60%，核心收益来自校正优化器对中间结果集的错误估计，避免后续聚合与排序开销被高估"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "强制使用哈希连接替代嵌套循环连接，解决大表聚合性能瓶颈",
+    "core_optimization_points": [
+      "当前执行计划为 Parallel Seq Scan + Partial HashAggregate + Gather Merge，说明已启用并行聚合",
+      "但连接方式未显式控制，优化器可能因估计错误选择低效路径",
+      "由于无外连接，且结果集大，哈希连接更优",
+      "强制使用 HashJoin，避免潜在嵌套循环循环扫描风险"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) HashJoin(lineitem lineitem) Rows(lineitem *0.0004) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计耗时下降 30%-50%，核心收益来自避免嵌套循环中对大表的重复扫描，哈希连接可一次性完成匹配"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "调整连接顺序为单表处理，强制先过滤再聚合，避免中间结果膨胀",
+    "core_optimization_points": [
+      "当前查询仅涉及单表 lineitem，无需连接，但优化器仍生成复杂计划",
+      "应强制将过滤与聚合合并为单阶段处理，避免不必要的排序与分发",
+      "使用 Leading 指定单表顺序，避免优化器误判为多表连接",
+      "结合 Rows Hint 修正估计，提升计划准确性"
+    ],
+    "hint_combination": "/*+ Leading( (lineitem) ) IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *0.0004) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计耗时下降 25%-45%，核心收益来自简化执行计划，减少 Gather、Sort、HashAggregate 等非必要开销"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "启用仅索引扫描（如存在覆盖索引），彻底避免回表开销",
+    "core_optimization_points": [
+      "当前无覆盖索引，但可考虑创建复合索引以支持此策略",
+      "由于查询仅涉及 l_returnflag、l_linestatus、l_shipdate、l_quantity、l_extendedprice、l_discount、l_tax，可构建覆盖索引",
+      "若索引存在，可强制 IndexOnlyScan 提升性能",
+      "即使无现成索引，也可通过 Hint 预留未来优化空间"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(lineitem idx_lineitem_shipdate_cover) Rows(lineitem *0.0004) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "若存在覆盖索引，预计耗时下降 50%-75%，核心收益来自完全跳过回表，仅通过索引获取全部数据"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "降低随机读代价参数，匹配 SSD 存储环境，提升索引扫描效率",
+    "core_optimization_points": [
+      "当前 random_page_cost 默认为 4.0，适用于 HDD，但 SSD 随机读代价更低",
+      "若数据库运行在 SSD 上，应将 random_page_cost 调整为 1.1~2.0",
+      "降低该值会使优化器更倾向于选择索引扫描而非顺序扫描",
+      "配合 IndexScan Hint 可进一步强化索引使用倾向"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Set(random_page_cost 1.1) Rows(lineitem *0.0004) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行时间减少 20%-35%，核心收益来自优化器更倾向选择索引扫描，减少全表扫描概率"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "强制位图扫描结合多索引，适用于未来存在多个过滤条件的场景",
+    "core_optimization_points": [
+      "当前仅一个过滤条件，但若未来增加 l_returnflag 或 l_linestatus 过滤，位图扫描更优",
+      "位图扫描可合并多个索引条件，减少随机 IO",
+      "当前虽无多索引条件，但可通过 Hint 提前布局"
+    ],
+    "hint_combination": "/*+ BitmapScan(lineitem idx_lineitem_shipdate) Rows(lineitem *0.0004) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "为未来扩展预留优化路径，若增加多条件过滤，预计性能提升 40%+，当前可作为性能兜底方案"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "禁用不必要的并行，避免并行启动开销对小结果集的影响",
+    "core_optimization_points": [
+      "当前并行度为 8，但过滤后结果集仅 23838 行，实际并行开销可能大于收益",
+      "若并行 worker 数量过高，会导致任务分发、合并开销增加",
+      "可尝试降低并行度至 2 或 4，平衡开销与收益"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *0.0004) Parallel(lineitem 2) */",
+    "expected_performance_benefit": "预计执行时间减少 10%-25%，核心收益来自避免过度并行带来的调度开销，尤其在低负载环境下更明显"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "强制使用 MergeJoin 以复用索引排序，避免额外排序开销",
+    "core_optimization_points": [
+      "l_shipdate 索引为 B-tree，天然有序，可复用排序结果",
+      "当前计划中存在 Sort 节点，说明未利用索引顺序",
+      "强制 MergeJoin 可复用索引顺序，避免额外排序"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) MergeJoin(lineitem lineitem) Rows(lineitem *0.0004) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计耗时下降 15%-30%，核心收益来自避免 QuickSort 内存排序，复用索引顺序"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "禁用顺序扫描，强制所有路径走索引，防止误用全表扫描",
+    "core_optimization_points": [
+      "当前存在 SeqScan，但有高效索引可用，应避免顺序扫描",
+      "使用 NoSeqScan 强制优化器放弃全表扫描路径",
+      "结合 IndexScan 提高索引使用率"
+    ],
+    "hint_combination": "/*+ NoSeqScan(lineitem) IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *0.0004) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行时间下降 25%-40%，核心收益来自杜绝全表扫描，强制走索引路径"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "提升 work_mem 以避免排序/哈希溢出到磁盘",
+    "core_optimization_points": [
+      "当前执行计划中无磁盘排序或哈希溢出信息，但若未来数据量增加，可能触发",
+      "work_mem 默认 4MB，若聚合中间结果大，易溢出",
+      "提升至 64MB 可显著降低磁盘 I/O"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Set(work_mem '64MB') Rows(lineitem *0.0004) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行时间下降 10%-20%，核心收益来自避免磁盘排序与哈希溢出，尤其在数据量波动时更具鲁棒性"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "强制使用 Partial HashAggregate + Gather Merge，最大化并行聚合效率",
+    "core_optimization_points": [
+      "当前计划已使用 Partial HashAggregate，但未强制并行聚合路径",
+      "可显式指定 HashAggregate 路径，确保优化器选择最优并行聚合结构"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) HashAggregate(lineitem lineitem) Rows(lineitem *0.0004) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计耗时下降 15%-30%，核心收益来自确保并行聚合路径被强制启用，提升聚合效率"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "使用 Memoize 优化潜在嵌套循环场景（虽当前无嵌套循环，但为未来预留）",
+    "core_optimization_points": [
+      "当前为单表查询，无嵌套循环，但若未来引入连接，Memoize 可复用内表结果",
+      "在多表连接场景中，若内表结果可缓存，Memoize 可显著提升性能"
+    ],
+    "hint_combination": "/*+ Memoize(lineitem lineitem) IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *0.0004) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "为未来多表连接场景预留优化路径，若存在外层驱动表，预计性能提升 30%+"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "禁用位图扫描，防止在单索引场景下引入额外开销",
+    "core_optimization_points": [
+      "当前仅一个索引条件，位图扫描引入额外位图构建开销",
+      "在单索引场景下，IndexScan 更高效"
+    ],
+    "hint_combination": "/*+ NoBitmapScan(lineitem) IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *0.0004) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行时间减少 5%-10%，核心收益来自避免位图构建开销，提升单索引查询效率"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "强制使用索引扫描并提升并行度，实现极致并行加速",
+    "core_optimization_points": [
+      "在 SSD 上，高并行度可充分发挥 I/O 并行能力",
+      "将并行度提升至 16，充分利用 CPU 核心"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *0.0004) Parallel(lineitem 16) */",
+    "expected_performance_benefit": "预计耗时下降 50%-70%，核心收益来自极致并行加速，尤其在高 I/O 带宽环境中表现突出"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "降低 CPU 代价参数，提升优化器对索引扫描的偏好",
+    "core_optimization_points": [
+      "当前 cpu_tuple_cost 默认 0.01，可适当降低以鼓励使用索引扫描",
+      "降低 CPU 代价会使索引扫描相对更便宜"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Set(cpu_tuple_cost 0.005) Rows(lineitem *0.0004) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行时间减少 10%-20%，核心收益来自优化器更倾向选择索引扫描路径"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "强制使用索引扫描并禁用嵌套循环，防止误用低效连接方法",
+    "core_optimization_points": [
+      "当前为单表，无连接，但若未来引入连接，应防止嵌套循环"
+    ],
+    "hint_combination": "/*+ NoNestLoop(lineitem lineitem) IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *0.0004) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "为未来多表连接场景提供安全保护，防止嵌套循环性能退化"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "综合策略：索引扫描 + 高并行 + 估计校正 + 参数调优，实现全局性能最优",
+    "core_optimization_points": [
+      "整合前序所有优化点，形成统一优化方案",
+      "强制索引扫描，提升并行度，修正估计，调整代价参数"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *0.0004) Parallel(lineitem 16) Set(random_page_cost 1.1) Set(work_mem '128MB') Set(cpu_tuple_cost 0.005) */",
+    "expected_performance_benefit": "预计执行耗时下降 60%-85%，为本查询最优方案，综合收益来自索引加速、极致并行、估计准确、内存优化"
+  }
+]
+```

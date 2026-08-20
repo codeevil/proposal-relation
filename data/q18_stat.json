@@ -1,0 +1,205 @@
+{
+  "sql_info": {
+    "original_sql": "",
+    "schema": "public",
+    "extracted_tables": [
+      {
+        "table_name": "customer",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "orders",
+        "schema_name": "public",
+        "alias": null
+      },
+      {
+        "table_name": "lineitem",
+        "schema_name": "public",
+        "alias": null
+      }
+    ]
+  },
+  "tables": {
+    "public.customer": {
+      "table_metadata": {
+        "relname": "customer",
+        "relnamespace": "public",
+        "reltuples": 1499964,
+        "relpages": 35827,
+        "relallvisible": 35827
+      },
+      "indexes": [
+        {
+          "index_name": "customer_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "c_custkey"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        },
+        {
+          "index_name": "idx_customer_nationkey",
+          "index_type": "btree",
+          "index_columns": [
+            "c_nationkey"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "c_custkey": {
+          "attname": "c_custkey",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "c_name": {
+          "attname": "c_name",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.orders": {
+      "table_metadata": {
+        "relname": "orders",
+        "relnamespace": "public",
+        "reltuples": 14999848,
+        "relpages": 260912,
+        "relallvisible": 260912
+      },
+      "indexes": [
+        {
+          "index_name": "idx_orders_custkey",
+          "index_type": "btree",
+          "index_columns": [
+            "o_custkey"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "idx_orders_orderdate",
+          "index_type": "btree",
+          "index_columns": [
+            "o_orderdate"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "orders_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "o_orderkey"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "o_custkey": {
+          "attname": "o_custkey",
+          "n_distinct": 859496.0,
+          "null_frac": 0.0
+        },
+        "o_orderdate": {
+          "attname": "o_orderdate",
+          "n_distinct": 2406.0,
+          "null_frac": 0.0
+        },
+        "o_orderkey": {
+          "attname": "o_orderkey",
+          "n_distinct": -1.0,
+          "null_frac": 0.0
+        },
+        "o_totalprice": {
+          "attname": "o_totalprice",
+          "n_distinct": -0.6819362,
+          "null_frac": 0.0
+        }
+      }
+    },
+    "public.lineitem": {
+      "table_metadata": {
+        "relname": "lineitem",
+        "relnamespace": "public",
+        "reltuples": 59990640,
+        "relpages": 1124542,
+        "relallvisible": 1124542
+      },
+      "indexes": [
+        {
+          "index_name": "idx_lineitem_orderkey",
+          "index_type": "btree",
+          "index_columns": [
+            "l_orderkey"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "idx_lineitem_partkey",
+          "index_type": "btree",
+          "index_columns": [
+            "l_partkey"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "idx_lineitem_shipdate",
+          "index_type": "btree",
+          "index_columns": [
+            "l_shipdate"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "idx_lineitem_suppkey",
+          "index_type": "btree",
+          "index_columns": [
+            "l_suppkey"
+          ],
+          "is_unique": false,
+          "is_primary": false,
+          "is_partial": false
+        },
+        {
+          "index_name": "lineitem_pkey",
+          "index_type": "btree",
+          "index_columns": [
+            "l_orderkey",
+            "l_linenumber"
+          ],
+          "is_unique": true,
+          "is_primary": true,
+          "is_partial": false
+        }
+      ],
+      "column_statistics": {
+        "l_orderkey": {
+          "attname": "l_orderkey",
+          "n_distinct": 399889.0,
+          "null_frac": 0.0
+        },
+        "l_quantity": {
+          "attname": "l_quantity",
+          "n_distinct": 50.0,
+          "null_frac": 0.0
+        }
+      }
+    }
+  }
+}

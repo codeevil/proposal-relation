@@ -1,0 +1,17 @@
+Finalize Aggregate  (cost=1089502.15..1089502.17 rows=1 width=32) (actual time=2377.707..2564.822 rows=1 loops=1)
+  ->  Gather  (cost=1089501.70..1089502.11 rows=4 width=64) (actual time=2365.080..2564.788 rows=5 loops=1)
+        Workers Planned: 4
+        Workers Launched: 4
+        ->  Partial Aggregate  (cost=1088501.70..1088501.71 rows=1 width=64) (actual time=2359.185..2359.193 rows=1 loops=5)
+              ->  Parallel Hash Join  (cost=61488.56..1085567.49 rows=167669 width=33) (actual time=681.284..2248.539 rows=149845 loops=5)
+                    Hash Cond: (lineitem.l_partkey = part.p_partkey)
+                    ->  Parallel Bitmap Heap Scan on lineitem  (cost=9276.61..1032909.41 rows=169952 width=16) (actual time=315.572..1726.955 rows=149845 loops=5)
+                          Recheck Cond: ((l_shipdate >= '1995-09-01'::date) AND (l_shipdate < '1995-10-01'::date))
+                          Heap Blocks: exact=79589
+                          ->  Bitmap Index Scan on idx_lineitem_shipdate  (cost=0.00..9106.66 rows=679809 width=0) (actual time=183.329..183.329 rows=749223 loops=1)
+                                Index Cond: ((l_shipdate >= '1995-09-01'::date) AND (l_shipdate < '1995-10-01'::date))
+                    ->  Parallel Hash  (cost=45961.98..45961.98 rows=499998 width=25) (actual time=360.155..360.158 rows=400000 loops=5)
+                          Buckets: 2097152  Batches: 1  Memory Usage: 137344kB
+                          ->  Parallel Seq Scan on part  (cost=0.00..45961.98 rows=499998 width=25) (actual time=0.022..103.906 rows=400000 loops=5)
+Planning Time: 1.759 ms
+Execution Time: 2564.922 ms

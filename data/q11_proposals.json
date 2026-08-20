@@ -1,0 +1,228 @@
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "修正严重行数估计偏差，强制以nation为驱动表，使用哈希连接避免嵌套循环的指数级开销",
+    "core_optimization_points": [
+      "识别nation表在过滤后仅1行，但优化器估计为1行（准确），而supplier与partsupp连接后估计行数严重偏低（79996 vs 实际323920）",
+      "使用Rows Hint校正连接结果集估计，避免优化器误判中间结果膨胀",
+      "强制以nation为最外层驱动表，控制连接顺序以最小化中间结果规模",
+      "强制supplier与partsupp之间使用HashJoin，替代低效的嵌套循环连接"
+    ],
+    "hint_combination": "/*+ Rows(partsupp supplier *4.0) Leading( (nation supplier partsupp) ) HashJoin(supplier partsupp) NoNestLoop(supplier partsupp) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%，核心收益来自消除嵌套循环对大表的重复扫描（实际内层循环4049×5次），并修正优化器对中间结果集的严重低估"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "强制使用覆盖索引扫描，消除回表开销，提升大表扫描效率",
+    "core_optimization_points": [
+      "partsupp表中ps_partkey与ps_suppkey为联合主键，且查询仅需ps_partkey、ps_supplycost、ps_availqty三列",
+      "构建覆盖索引（ps_partkey, ps_suppkey, ps_supplycost, ps_availqty）可支持IndexOnlyScan",
+      "强制partsupp使用仅索引扫描，避免回表IO",
+      "通过NoSeqScan避免全表扫描，确保索引路径被优先选择"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(partsupp partsupp_pkey) NoSeqScan(partsupp) */",
+    "expected_performance_benefit": "预计执行耗时降低40%-55%，核心收益来自消除partsupp表每次扫描后的回表操作，尤其在并行扫描下IO性能提升显著"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "优化连接顺序，将nation作为驱动表，先连接supplier，再连接partsupp，控制中间结果膨胀",
+    "core_optimization_points": [
+      "nation表仅有25行，过滤后仅1行，应作为最优驱动表",
+      "supplier表有s_nationkey索引，过滤后仅4049行，结果集小",
+      "partsupp表大但可被索引高效扫描，应作为最后连接表",
+      "使用灌木树写法精确控制连接树结构，防止优化器错误合并"
+    ],
+    "hint_combination": "/*+ Leading( (nation (supplier partsupp)) ) */",
+    "expected_performance_benefit": "预计执行耗时降低45%-60%，核心收益来自将最小结果集（nation）作为驱动，避免先连接大表partsupp导致中间结果膨胀"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "强制使用哈希连接替代嵌套循环，解决嵌套循环在大表连接中的性能灾难",
+    "core_optimization_points": [
+      "当前执行计划中supplier与partsupp使用嵌套循环，实际执行5次×4049次循环，共20245次内层扫描",
+      "supplier表有索引，但partsupp表无索引连接键，嵌套循环代价极高",
+      "两表连接为等值连接，且结果集大，哈希连接更优",
+      "使用NoNestLoop禁止嵌套循环，强制哈希连接"
+    ],
+    "hint_combination": "/*+ NoNestLoop(supplier partsupp) HashJoin(supplier partsupp) */",
+    "expected_performance_benefit": "预计执行耗时降低55%-75%，核心收益来自将O(n×m)嵌套循环降为O(n+m)哈希连接，避免重复扫描"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "提升并行度，加速大表扫描与聚合阶段，充分利用多核CPU资源",
+    "core_optimization_points": [
+      "partsupp表有近800万行，但仅启动了5个并行Worker（Workers Launched: 4）",
+      "supplier表有2216页，但仅使用1个Worker扫描",
+      "聚合阶段（HashAggregate）内存使用131MB，但未充分利用并行"
+    ],
+    "hint_combination": "/*+ Parallel(partsupp 8) Parallel(supplier 4) Set(max_parallel_workers_per_gather 8) */",
+    "expected_performance_benefit": "预计执行耗时降低35%-50%，核心收益来自并行加速大表扫描与哈希聚合，尤其在高并发环境下提升显著"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "强制使用位图扫描优化supplier表的过滤，减少随机IO开销",
+    "core_optimization_points": [
+      "supplier表s_nationkey列有索引，且n_name='GERMANY'过滤选择性高（25个nation中1个）",
+      "当前使用Bitmap Index Scan，但可进一步优化为Bitmap Scan以批量回表",
+      "使用BitmapScan强制位图扫描，减少随机IO次数"
+    ],
+    "hint_combination": "/*+ BitmapScan(supplier idx_supplier_nationkey) */",
+    "expected_performance_benefit": "预计执行耗时降低20%-30%，核心收益来自减少supplier表的随机IO次数，提升回表效率"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "校正子查询的行数估计，避免主查询因子查询结果估计错误而选择错误路径",
+    "core_optimization_points": [
+      "子查询中partsupp与supplier连接后估计为79996行，实际为323920行，估计偏差高达4倍",
+      "主查询HAVING条件依赖子查询结果，估计偏差导致过滤条件误判",
+      "使用Rows Hint修正子查询连接结果集估计"
+    ],
+    "hint_combination": "/*+ Rows(partsupp supplier *4.0) */",
+    "expected_performance_benefit": "预计执行耗时降低25%-40%，核心收益来自避免因子查询估计错误导致主查询连接路径选择错误"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "使用Memoize缓存优化嵌套循环中的重复内表查询，减少重复扫描",
+    "core_optimization_points": [
+      "supplier表被多次扫描（实际5次循环），且s_nationkey相同，可复用结果",
+      "使用Memoize缓存supplier表在nation.n_nationkey=1时的结果",
+      "避免在嵌套循环中重复执行Bitmap Index Scan"
+    ],
+    "hint_combination": "/*+ Memoize(nation supplier) */",
+    "expected_performance_benefit": "预计执行耗时降低15%-25%，核心收益来自减少重复的Bitmap Index Scan与Heap Scan"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "强制使用MergeJoin，利用索引天然有序性，避免哈希表构建开销",
+    "core_optimization_points": [
+      "supplier表s_suppkey为主键，且索引为B树，天然有序",
+      "partsupp表ps_suppkey为联合主键的一部分，且索引有序",
+      "连接键为等值，且两表均有序，MergeJoin更优",
+      "使用MergeJoin替代哈希连接，降低CPU开销"
+    ],
+    "hint_combination": "/*+ MergeJoin(supplier partsupp) NoHashJoin(supplier partsupp) */",
+    "expected_performance_benefit": "预计执行耗时降低20%-35%，核心收益来自避免哈希表构建与探测的CPU开销，尤其在内存充足时优势明显"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "提升work_mem以避免哈希聚合与排序的磁盘溢出，提升内存操作效率",
+    "core_optimization_points": [
+      "HashAggregate使用1552kB磁盘，说明哈希表溢出到磁盘",
+      "Sort使用quicksort，但内存仅25kB，未使用归并排序",
+      "当前work_mem可能不足，导致磁盘操作"
+    ],
+    "hint_combination": "/*+ Set(work_mem '256MB') */",
+    "expected_performance_benefit": "预计执行耗时降低30%-50%，核心收益来自避免哈希与排序的磁盘I/O，提升内存操作效率"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "禁用并行扫描以避免小表并行开销，提升小表扫描效率",
+    "core_optimization_points": [
+      "nation表仅1页，但被并行扫描（Workers Planned: 4）",
+      "小表并行扫描开销大于收益，导致额外调度开销",
+      "使用Parallel(nation 0)禁用并行扫描"
+    ],
+    "hint_combination": "/*+ Parallel(nation 0) */",
+    "expected_performance_benefit": "预计执行耗时降低10%-15%，核心收益来自避免小表的并行调度开销"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "强制使用索引扫描替代顺序扫描，提升supplier表的过滤效率",
+    "core_optimization_points": [
+      "supplier表有idx_supplier_nationkey索引，但优化器未优先使用",
+      "当前使用Bitmap Heap Scan，但可直接使用IndexScan",
+      "使用IndexScan强制走索引路径"
+    ],
+    "hint_combination": "/*+ IndexScan(supplier idx_supplier_nationkey) NoSeqScan(supplier) */",
+    "expected_performance_benefit": "预计执行耗时降低15%-25%，核心收益来自减少随机IO与回表次数"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "使用Rows Hint精确控制中间结果集大小，防止优化器误判连接代价",
+    "core_optimization_points": [
+      "partsupp与supplier连接后，优化器估计79996行，实际323920行，偏差4倍",
+      "使用乘法系数校正，使优化器正确评估连接代价",
+      "避免因低估导致选择嵌套循环"
+    ],
+    "hint_combination": "/*+ Rows(partsupp supplier *4.0) */",
+    "expected_performance_benefit": "预计执行耗时降低35%-50%，核心收益来自让优化器正确选择哈希连接"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "强制以supplier为中间连接节点，形成分阶段连接结构，控制中间结果规模",
+    "core_optimization_points": [
+      "nation与supplier先连接，结果集4049行，再与partsupp连接",
+      "避免nation与partsupp直接连接导致中间结果过大",
+      "使用灌木树写法精确控制连接结构"
+    ],
+    "hint_combination": "/*+ Leading( (nation (supplier partsupp)) ) */",
+    "expected_performance_benefit": "预计执行耗时降低30%-45%，核心收益来自控制中间结果集增长速率"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "使用NoHashJoin强制优化器选择嵌套循环，适用于小结果集连接场景",
+    "core_optimization_points": [
+      "supplier表仅4049行，partsupp表虽大但连接键有索引",
+      "若优化器错误选择哈希连接，可强制使用嵌套循环",
+      "适用于内表有高选择性索引的场景"
+    ],
+    "hint_combination": "/*+ NoHashJoin(supplier partsupp) NestLoop(supplier partsupp) */",
+    "expected_performance_benefit": "预计执行耗时降低10%-20%，核心收益来自避免哈希表构建的CPU开销"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "提升random_page_cost以反映SSD性能，优化代价模型，引导更优路径",
+    "core_optimization_points": [
+      "当前random_page_cost为4.0，适用于HDD环境",
+      "若为SSD环境，应设为1.1~2.0",
+      "调整代价模型，使优化器更倾向使用索引扫描"
+    ],
+    "hint_combination": "/*+ Set(random_page_cost 1.5) */",
+    "expected_performance_benefit": "预计执行耗时降低15%-25%，核心收益来自让优化器更倾向选择索引扫描"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "强制使用SeqScan替代索引扫描，适用于高选择性过滤场景",
+    "core_optimization_points": [
+      "若supplier表过滤后返回率>20%，索引扫描代价高于顺序扫描",
+      "当前返回4049/100000=4.05%，仍适合索引扫描",
+      "但若数据分布极不均匀，可强制顺序扫描"
+    ],
+    "hint_combination": "/*+ SeqScan(supplier) NoIndexScan(supplier) */",
+    "expected_performance_benefit": "预计执行耗时降低5%-10%，核心收益来自避免索引扫描的随机IO开销"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "使用NoMemoize禁用缓存，避免缓存带来的内存开销，适用于高基数场景",
+    "core_optimization_points": [
+      "若supplier表数据基数高，Memoize缓存可能占用过多内存",
+      "禁用Memoize避免内存溢出风险",
+      "适用于非重复驱动值场景"
+    ],
+    "hint_combination": "/*+ NoMemoize(nation supplier) */",
+    "expected_performance_benefit": "预计执行耗时降低5%-15%，核心收益来自避免缓存管理开销"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "强制使用IndexScan并指定索引，避免优化器选择错误索引",
+    "core_optimization_points": [
+      "supplier表有idx_supplier_nationkey索引，但优化器可能误选其他索引",
+      "使用IndexScan(表名 索引名)强制指定最优索引"
+    ],
+    "hint_combination": "/*+ IndexScan(supplier idx_supplier_nationkey) */",
+    "expected_performance_benefit": "预计执行耗时降低10%-20%，核心收益来自避免次优索引选择"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "使用Set( enable_seqscan 0 )禁用顺序扫描，强制使用索引路径",
+    "core_optimization_points": [
+      "防止优化器在小表上选择顺序扫描",
+      "确保所有表均使用索引扫描",
+      "适用于索引覆盖率高的场景"
+    ],
+    "hint_combination": "/*+ Set(enable_seqscan 0) */",
+    "expected_performance_benefit": "预计执行耗时降低20%-35%，核心收益来自强制走索引路径，避免全表扫描"
+  }
+]
+```

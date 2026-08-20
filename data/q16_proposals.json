@@ -1,0 +1,244 @@
+```json
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "校正严重行数估计偏差，强制以小结果集的part表为驱动表，使用哈希连接避免嵌套循环性能灾难",
+    "core_optimization_points": [
+      "基于统计信息计算part表过滤后行数约为59,365，远低于优化器估计的73,980，但实际执行中该表被并行扫描5次，共输出59,365行，确认估计偏差较小，但连接结果集被严重低估",
+      "识别出原计划中part表作为内表被哈希构建，但其行数仅为59k，而partsupp表扫描行数高达159万，应将part作为驱动表以避免大表嵌套循环",
+      "原计划使用Parallel Hash Join，但连接顺序错误导致大表partsupp作为左表被扫描，应强制调整连接顺序为part→partsupp",
+      "使用Rows Hint修正连接后中间结果集估计，避免优化器误判连接代价"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *0.5) Leading( (part partsupp) ) HashJoin(part partsupp) Parallel(part 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-75%，核心收益来自避免对partsupp的159万行进行嵌套循环扫描，将驱动表从大表转为小表，消除百万级循环开销"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "强制使用仅索引扫描覆盖part表，避免全表扫描与后续连接的高IO开销",
+    "core_optimization_points": [
+      "part表中p_brand、p_type、p_size均有索引，且查询仅需这些列，可构建覆盖索引扫描",
+      "当前执行计划中part表使用Parallel Seq Scan，扫描5次共34万行，但仅5.9万行通过过滤，说明顺序扫描效率低下",
+      "利用idx_part_brand索引可实现Index Only Scan，无需回表，显著降低IO代价",
+      "结合p_size IN (...) 的等值查询，索引可高效定位，且n_distinct=50，选择性良好"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(part idx_part_brand) Leading( (part partsupp) ) HashJoin(part partsupp) Parallel(part 4) */",
+    "expected_performance_benefit": "预计降低执行耗时40%-55%，核心收益来自将part表从顺序扫描转为仅索引扫描，减少约34万次随机IO，加速连接前数据准备"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "修正子查询过滤器的行数估计偏差，强制使用索引扫描替代全表扫描，避免大表嵌套循环扫描",
+    "core_optimization_points": [
+      "子查询中supplier表使用Seq Scan，实际仅56行满足s_comment LIKE '%Customer%Complaints%'，但优化器估计仅10行，实际偏差5.6倍",
+      "子查询在partsupp扫描中被重复执行5次（实际loops=5），每次扫描10万行，总IO高达50万页，严重拖慢性能",
+      "supplier表虽无索引，但s_comment为文本字段，可考虑使用GIN索引（若存在），否则强制使用IndexScan避免全表扫描",
+      "若无合适索引，应使用NoSeqScan强制优化器选择其他路径，但当前无可用索引，故改为强制使用IndexScan（若存在）或提升并行度"
+    ],
+    "hint_combination": "/*+ NoSeqScan(supplier) IndexScan(supplier) Leading( (part partsupp) ) HashJoin(part partsupp) Parallel(supplier 4) */",
+    "expected_performance_benefit": "预计降低执行耗时35%-50%，核心收益来自将supplier子查询从全表扫描转为索引扫描，减少5次全表扫描，避免50万页IO"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "将NOT IN子查询转为NOT EXISTS，避免子查询重复执行与NULL值处理开销，配合索引扫描提升性能",
+    "core_optimization_points": [
+      "原SQL使用NOT IN (SELECT ...)，在存在NULL值时逻辑错误且执行效率极低，PostgreSQL会自动转为NOT EXISTS但代价高",
+      "子查询被重复执行5次（worker数=5），每次执行Seq Scan，总代价高昂",
+      "NOT EXISTS可配合索引扫描实现早期终止，且无需处理NULL值问题",
+      "若supplier表有s_comment索引，可大幅减少扫描行数"
+    ],
+    "hint_combination": "/*+ NoSeqScan(supplier) IndexScan(supplier) Leading( (part partsupp) ) HashJoin(part partsupp) Parallel(supplier 4) */",
+    "expected_performance_benefit": "预计降低执行耗时30%-45%，核心收益来自避免NOT IN的复杂处理逻辑与重复执行，配合索引扫描实现快速终止"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "强制使用合并连接（MergeJoin）复用part表的索引排序，避免额外排序开销",
+    "core_optimization_points": [
+      "part表中p_partkey为主键，天然有序，且查询中连接键为p_partkey，可复用排序",
+      "当前执行计划中part表被哈希构建，但其数据已有序，应使用MergeJoin复用排序避免哈希构建代价",
+      "原计划中part表被并行哈希构建，但其数据量小（5.9万行），哈希构建代价高于合并连接",
+      "合并连接可避免哈希表构建与内存消耗，尤其适合小结果集"
+    ],
+    "hint_combination": "/*+ MergeJoin(part partsupp) Leading( (part partsupp) ) IndexOnlyScan(part idx_part_brand) Parallel(part 4) */",
+    "expected_performance_benefit": "预计降低执行耗时25%-40%，核心收益来自避免哈希表构建与内存开销，利用part表天然有序特性复用排序"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "提升part表并行度至4，充分利用多核CPU加速小表扫描与连接前准备",
+    "core_optimization_points": [
+      "part表总行数199万，但过滤后仅5.9万行，属于中等规模，但并行扫描可显著加速",
+      "当前执行计划中part表使用Parallel Seq Scan，但并行度为5（workers=5），但实际扫描行数仅5.9万，可适当降低并行度以避免过度并行",
+      "但为加速连接前数据准备，可适度提升并行度至4，提升吞吐",
+      "并行度设置合理，避免因并行启动开销大于收益"
+    ],
+    "hint_combination": "/*+ Parallel(part 4) Leading( (part partsupp) ) HashJoin(part partsupp) IndexOnlyScan(part idx_part_brand) */",
+    "expected_performance_benefit": "预计降低执行耗时15%-25%，核心收益来自加速小表扫描阶段，提升并行吞吐，尤其在高并发环境下效果明显"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "强制使用覆盖索引实现仅索引扫描，同时调整连接顺序，消除不必要的回表与排序",
+    "core_optimization_points": [
+      "part表中p_brand、p_type、p_size三列可被idx_part_brand覆盖，且查询仅需这三列",
+      "当前执行计划中part表使用Seq Scan，但仅需三列，应使用Index Only Scan避免回表",
+      "结合p_size IN (...) 的等值查询，索引可高效定位，且n_distinct=50，选择性良好",
+      "结合合并连接，复用索引排序，避免额外排序"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(part idx_part_brand) MergeJoin(part partsupp) Leading( (part partsupp) ) Parallel(part 4) */",
+    "expected_performance_benefit": "预计降低执行耗时30%-45%，核心收益来自避免回表IO与排序开销，利用覆盖索引+合并连接实现最优路径"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "修正连接后中间结果集行数估计，强制哈希连接以避免嵌套循环的指数级性能退化",
+    "core_optimization_points": [
+      "原计划中partsupp表扫描159万行，连接后输出237万行，但优化器估计仅14.8万行，严重低估",
+      "若使用嵌套循环，内表需被扫描159万次，代价极高，但优化器选择哈希连接，说明其已识别风险",
+      "但连接顺序错误导致大表作为左表，应强制调整顺序为小表驱动",
+      "使用Rows Hint修正连接后估计，确保优化器选择哈希连接"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *0.5) Leading( (part partsupp) ) HashJoin(part partsupp) Parallel(part 4) */",
+    "expected_performance_benefit": "预计降低执行耗时50%-65%，核心收益来自避免嵌套循环的千万级循环，确保哈希连接正确执行"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "禁用并行扫描以避免小表并行启动开销，提升整体执行效率",
+    "core_optimization_points": [
+      "part表总行数199万，过滤后仅5.9万行，属于中等规模，但并行扫描会引入启动开销",
+      "当前执行计划中part表使用Parallel Seq Scan，但实际扫描行数少，应禁用并行以避免开销",
+      "小表并行会得不偿失，尤其在高并发环境下",
+      "可设置并行度为0，强制使用串行扫描"
+    ],
+    "hint_combination": "/*+ Parallel(part 0) Leading( (part partsupp) ) HashJoin(part partsupp) IndexOnlyScan(part idx_part_brand) */",
+    "expected_performance_benefit": "预计降低执行耗时10%-20%，核心收益来自避免小表并行启动开销，尤其在高并发环境下效果显著"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "强制使用位图扫描处理多条件过滤，减少随机IO与扫描开销",
+    "core_optimization_points": [
+      "part表中p_brand、p_type、p_size均有独立索引，且过滤条件为多条件组合",
+      "当前使用Seq Scan，但可使用Bitmap Scan组合多个索引，减少随机IO",
+      "Bitmap Scan先构建位图，再批量回表，适合中等选择性查询",
+      "p_brand、p_type、p_size选择性均良好，适合位图扫描"
+    ],
+    "hint_combination": "/*+ BitmapScan(part) Leading( (part partsupp) ) HashJoin(part partsupp) Parallel(part 4) */",
+    "expected_performance_benefit": "预计降低执行耗时20%-35%，核心收益来自减少随机IO，利用位图扫描批量访问数据"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "调整连接顺序为part→partsupp，强制使用哈希连接，避免大表嵌套循环",
+    "core_optimization_points": [
+      "part表过滤后仅5.9万行，应作为驱动表",
+      "partsupp表有799万行，若作为驱动表将导致内表扫描次数高达159万次",
+      "应强制将part作为左表，partsupp作为右表",
+      "使用Leading强制连接顺序，避免优化器错误选择"
+    ],
+    "hint_combination": "/*+ Leading( (part partsupp) ) HashJoin(part partsupp) IndexOnlyScan(part idx_part_brand) Parallel(part 4) */",
+    "expected_performance_benefit": "预计降低执行耗时55%-70%，核心收益来自避免嵌套循环的百万级循环，将驱动表从大表转为小表"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "提升work_mem以避免排序磁盘溢出，加速GroupAggregate与Sort节点",
+    "core_optimization_points": [
+      "Sort节点实际使用quicksort，Memory: 3160kB，但Worker 0内存高达34844kB，说明排序数据量大",
+      "若work_mem不足，排序会落盘，性能骤降",
+      "当前执行计划中Sort Method为quicksort，但Memory使用量大，应提升work_mem以避免磁盘排序",
+      "可设置work_mem为128MB或256MB，确保排序在内存完成"
+    ],
+    "hint_combination": "/*+ Set(work_mem '128MB') Leading( (part partsupp) ) HashJoin(part partsupp) IndexOnlyScan(part idx_part_brand) */",
+    "expected_performance_benefit": "预计降低执行耗时25%-40%，核心收益来自避免磁盘排序，提升排序效率"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "强制使用Memoize缓存避免重复子查询执行，提升NOT IN子查询性能",
+    "core_optimization_points": [
+      "NOT IN子查询在每个worker中重复执行5次，每次扫描supplier表",
+      "若子查询结果可缓存，可避免重复扫描",
+      "使用Memoize缓存子查询结果，重复执行时直接复用",
+      "适用于内表较小、外层驱动表较大的场景"
+    ],
+    "hint_combination": "/*+ Memoize(supplier (SELECT s_suppkey FROM supplier WHERE s_comment LIKE '%Customer%Complaints%')) Leading( (part partsupp) ) HashJoin(part partsupp) Parallel(part 4) */",
+    "expected_performance_benefit": "预计降低执行耗时20%-35%，核心收益来自避免5次重复子查询扫描，提升子查询执行效率"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "禁用嵌套循环连接，强制使用哈希连接，避免优化器误选低效路径",
+    "core_optimization_points": [
+      "当前优化器选择哈希连接，但连接顺序错误",
+      "若优化器误选嵌套循环，应强制禁止",
+      "使用NoNestLoop强制避免嵌套循环，确保选择哈希连接",
+      "适用于大表连接场景"
+    ],
+    "hint_combination": "/*+ NoNestLoop(part partsupp) Leading( (part partsupp) ) HashJoin(part partsupp) IndexOnlyScan(part idx_part_brand) */",
+    "expected_performance_benefit": "预计降低执行耗时45%-60%，核心收益来自避免嵌套循环的百万级循环，确保哈希连接正确执行"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "强制使用覆盖索引实现仅索引扫描，同时提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "part表中p_brand、p_type、p_size三列可被idx_part_brand覆盖，且查询仅需这三列",
+      "当前执行计划中part表使用Seq Scan，但应使用Index Only Scan避免回表",
+      "结合p_size IN (...) 的等值查询，索引可高效定位",
+      "可适度提升并行度至4，加速扫描"
+    ],
+    "hint_combination": "/*+ IndexOnlyScan(part idx_part_brand) Parallel(part 4) Leading( (part partsupp) ) HashJoin(part partsupp) */",
+    "expected_performance_benefit": "预计降低执行耗时35%-50%，核心收益来自避免回表IO与并行加速扫描"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "修正子查询行数估计，强制使用索引扫描，避免全表扫描开销",
+    "core_optimization_points": [
+      "子查询中supplier表实际仅56行满足条件，但优化器估计10行，偏差5.6倍",
+      "应使用Rows Hint修正子查询行数估计，确保优化器选择最优路径",
+      "使用IndexScan强制使用索引，避免全表扫描",
+      "提升并行度以加速子查询执行"
+    ],
+    "hint_combination": "/*+ Rows(supplier *5.6) IndexScan(supplier) Parallel(supplier 4) Leading( (part partsupp) ) HashJoin(part partsupp) */",
+    "expected_performance_benefit": "预计降低执行耗时30%-45%，核心收益来自避免全表扫描，提升子查询执行效率"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "调整连接顺序为part→partsupp，强制使用合并连接，复用索引排序",
+    "core_optimization_points": [
+      "part表p_partkey为主键，天然有序，可复用排序",
+      "当前执行计划中使用哈希连接，但合并连接更优",
+      "应强制使用MergeJoin，避免哈希表构建代价",
+      "连接顺序调整为part→partsupp，确保小表驱动"
+    ],
+    "hint_combination": "/*+ Leading( (part partsupp) ) MergeJoin(part partsupp) IndexOnlyScan(part idx_part_brand) Parallel(part 4) */",
+    "expected_performance_benefit": "预计降低执行耗时30%-45%，核心收益来自避免哈希表构建，复用索引排序"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "强制使用位图扫描处理多条件过滤，减少随机IO与扫描开销",
+    "core_optimization_points": [
+      "part表中p_brand、p_type、p_size均有独立索引，且过滤条件为多条件组合",
+      "当前使用Seq Scan，但可使用Bitmap Scan组合多个索引，减少随机IO",
+      "Bitmap Scan先构建位图，再批量回表，适合中等选择性查询",
+      "p_brand、p_type、p_size选择性均良好，适合位图扫描"
+    ],
+    "hint_combination": "/*+ BitmapScan(part) Leading( (part partsupp) ) HashJoin(part partsupp) Parallel(part 4) */",
+    "expected_performance_benefit": "预计降低执行耗时20%-35%，核心收益来自减少随机IO，利用位图扫描批量访问数据"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "提升max_parallel_workers_per_gather以启用更多并行worker，加速大表扫描",
+    "core_optimization_points": [
+      "当前执行计划中Workers Planned: 4，Workers Launched: 4",
+      "若max_parallel_workers_per_gather设置较低，可提升以启用更多worker",
+      "可设置为8或16，加速大表扫描",
+      "适用于高并发、多核服务器环境"
+    ],
+    "hint_combination": "/*+ Set(max_parallel_workers_per_gather 8) Leading( (part partsupp) ) HashJoin(part partsupp) IndexOnlyScan(part idx_part_brand) */",
+    "expected_performance_benefit": "预计降低执行耗时15%-30%，核心收益来自加速大表扫描，提升并行吞吐"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "强制使用仅索引扫描并禁用并行扫描，避免小表并行启动开销",
+    "core_optimization_points": [
+      "part表过滤后仅5.9万行，属于小表，应禁用并行扫描以避免启动开销",
+      "当前执行计划中part表使用Parallel Seq Scan，但应改为串行扫描",
+      "使用IndexOnlyScan避免回表，提升效率",
+      "可设置并行度为0，强制串行"
+    ],
+    "hint_combination": "/*+ Parallel(part 0) IndexOnlyScan(part idx_part_brand) Leading( (part partsupp) ) HashJoin(part partsupp) */",
+    "expected_performance_benefit": "预计降低执行耗时10%-25%，核心收益来自避免小表并行启动开销，提升整体执行效率"
+  }
+]
+```

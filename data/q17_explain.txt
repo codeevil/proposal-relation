@@ -1,0 +1,21 @@
+Aggregate  (cost=1926640.66..1926640.68 rows=1 width=32) (actual time=19174.622..19174.635 rows=1 loops=1)
+  ->  Hash Join  (cost=43418.76..1926593.17 rows=18998 width=8) (actual time=156.857..19172.368 rows=5526 loops=1)
+        Hash Cond: (lineitem.l_partkey = part.p_partkey)
+        Join Filter: (lineitem.l_quantity < (SubPlan 1))
+        Rows Removed by Join Filter: 55859
+        ->  Seq Scan on lineitem  (cost=0.00..1724448.40 rows=59990640 width=17) (actual time=0.028..6161.172 rows=59986052 loops=1)
+        ->  Hash  (cost=43394.69..43394.69 rows=1926 width=4) (actual time=135.720..135.730 rows=2044 loops=1)
+              Buckets: 2048  Batches: 1  Memory Usage: 88kB
+              ->  Bitmap Heap Scan on part  (cost=863.41..43394.69 rows=1926 width=4) (actual time=17.448..135.094 rows=2044 loops=1)
+                    Recheck Cond: (p_brand = 'Brand#23'::bpchar)
+                    Filter: (p_container = 'MED BOX'::bpchar)
+                    Rows Removed by Filter: 77782
+                    Heap Blocks: exact=35325
+                    ->  Bitmap Index Scan on idx_part_brand  (cost=0.00..862.92 rows=78733 width=0) (actual time=9.554..9.555 rows=79826 loops=1)
+                          Index Cond: (p_brand = 'Brand#23'::bpchar)
+        SubPlan 1
+          ->  Aggregate  (cost=125.03..125.04 rows=1 width=32) (actual time=0.058..0.058 rows=1 loops=61385)
+                ->  Index Scan using idx_lineitem_partkey on lineitem lineitem_1  (cost=0.44..124.95 rows=30 width=5) (actual time=0.007..0.051 rows=31 loops=61385)
+                      Index Cond: (l_partkey = part.p_partkey)
+Planning Time: 1.486 ms
+Execution Time: 19175.129 ms
