@@ -918,6 +918,86 @@ def _print_results_table(results, header: str = None, output_file = None):
     _emit("")
 
 
+
+def _generate_stat_table(results_per_query: list[dict], stat_path: Path) -> None:
+    """Generate a summary statistics table from per-query benchmark results.
+
+    For each query (identified by ``"sql_name"``), selects:
+      - baseline row  (label == "baseline")
+      - lero-baseline row (label == "lero-baseline")
+      - best proposal row (minimum elapsed_ms among rows with status "ok")
+
+    Writes a formatted table to ``stat_path`` with columns:
+      Query | Baseline(ms) | Lero-Baseline(ms) | Best-Proposal | Best-Time(ms) | Speedup-vs-Base | Speedup-vs-Lero | Status | Error
+    """
+    stat_path = Path(stat_path)
+    stat_path.parent.mkdir(parents=True, exist_ok=True)
+
+    headers = ["Query", "Baseline(ms)", "Lero-Baseline(ms)", "Best-Proposal",
+               "Best(ms)", "Speedup-Base", "Speedup-Lero", "Status", "Error"]
+    rows = []
+
+    for entry in results_per_query:
+        sql_name = entry["sql_name"]
+        results = entry["results"]
+
+        baseline_ms = None
+        lero_ms = None
+        best_result = None
+        best_ms = float("inf")
+
+        for r in results:
+            if r["label"] == "baseline" and r["status"] == "ok":
+                baseline_ms = r["elapsed_ms"]
+            if r["label"] == "lero-baseline" and r["status"] == "ok":
+                lero_ms = r["elapsed_ms"]
+            if r["status"] == "ok" and r["elapsed_ms"] < best_ms:
+                best_ms = r["elapsed_ms"]
+                best_result = r
+
+        if best_result is not None:
+            best_label = best_result["label"]
+            best_elapsed = f"{best_ms:.2f}"
+            speedup_base = f"{baseline_ms / best_ms:.2f}x" if baseline_ms else "N/A"
+            speedup_lero = f"{lero_ms / best_ms:.2f}x" if lero_ms else "N/A"
+            status = best_result["status"]
+            error = best_result.get("error_msg", "")
+            if len(error) > 40:
+                error = error[:37] + "..."
+        else:
+            # No successful proposal found
+            best_label = "N/A"
+            best_elapsed = "N/A"
+            speedup_base = "N/A"
+            speedup_lero = "N/A"
+            status = "no_success"
+            error = ""
+
+        bl_str = f"{baseline_ms:.2f}" if baseline_ms else "N/A"
+        lero_str = f"{lero_ms:.2f}" if lero_ms else "N/A"
+
+        rows.append([sql_name, bl_str, lero_str, best_label, best_elapsed,
+                     speedup_base, speedup_lero, status, error])
+
+    if not rows:
+        logger.info("No query results to summarize.")
+        return
+
+    widths = [max(len(str(row[i])) for row in [headers] + rows) for i in range(len(headers))]
+    fmt = "  ".join(f"{{:<{w}}}" for w in widths)
+    sep = "  ".join("-" * w for w in widths)
+
+    lines = []
+    lines.append(fmt.format(*headers))
+    lines.append(sep)
+    for row in rows:
+        lines.append(fmt.format(*row))
+
+    text = "\n".join(lines) + "\n"
+    stat_path.write_text(text, encoding="utf-8")
+    logger.info(f"Stat summary written to: {stat_path}")
+
+
 def _strip_markdown_fence(text: str) -> str:
     text = text.strip()
     if text.startswith("```"):
@@ -1162,8 +1242,11 @@ def gen_proposals(sql_path: Path, opts: DbOptions, stat_path: Path = None,
     return output_path
 
 
-def run_one_query(sql_path: Path, opts: DbOptions, output_file = None) -> None:
-    """Full pipeline for a single SQL file: explain -> stat -> proposals -> run."""
+def run_one_query(sql_path: Path, opts: DbOptions, output_file = None):
+    """Full pipeline for a single SQL file: explain -> stat -> proposals -> run.
+    
+    Returns the list of result dicts from ``run_proposals`` (empty on failure).
+    """
     sql_path = Path(sql_path)
     logger.info(f"=== Processing {sql_path.name} ===")
 
@@ -1177,8 +1260,8 @@ def run_one_query(sql_path: Path, opts: DbOptions, output_file = None) -> None:
     proposals_path = gen_proposals(sql_path, opts, stat_path=stat_path, explain_path=explain_path)
 
     logger.info("Step 4/4: Running proposals ...")
-    run_proposals(sql_path, opts, proposals_path=proposals_path,
-                  output_file=output_file, header=sql_path.name)
+    return run_proposals(sql_path, opts, proposals_path=proposals_path,
+                         output_file=output_file, header=sql_path.name)
 
 
 def cmd_run_one_query(args):
@@ -1189,7 +1272,15 @@ def cmd_run_one_query(args):
 
     opts = DbOptions(host=args.host, port=args.port, user=args.user,
                      database=args.database, sleep=args.sleep)
-    run_one_query(sql_path, opts)
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_file = open(output_path, "w", encoding="utf-8")
+    try:
+        run_one_query(sql_path, opts, output_file=output_file)
+    finally:
+        output_file.close()
+    print(f"[INFO] Summary written to: {output_path}")
 
 
 def discover_sql_files(directory: Path):
@@ -1197,7 +1288,8 @@ def discover_sql_files(directory: Path):
     return sorted(directory.rglob("*.sql"))
 
 
-def run_queries(directory: Path, opts: DbOptions, output_path: Path = None) -> None:
+def run_queries(directory: Path, opts: DbOptions, output_path: Path = None,
+                stat_path: Path = None) -> None:
     """Run the full pipeline for every SQL file under directory (recursive)."""
     directory = Path(directory)
     if not directory.is_dir():
@@ -1213,13 +1305,17 @@ def run_queries(directory: Path, opts: DbOptions, output_path: Path = None) -> N
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_file = open(output_path, "w", encoding="utf-8")
 
+    stat_path = Path(stat_path) if stat_path else DATA_DIR / "run_queries_stat.txt"
+
     logger.info(f"Found {len(sql_files)} SQL file(s) under {directory}")
     logger.info(f"Summary output: {output_path}")
+    all_results = []
     try:
         for i, sql_path in enumerate(sql_files, 1):
             logger.info(f"--- [{i}/{len(sql_files)}] {sql_path} ---")
             try:
-                run_one_query(sql_path, opts, output_file=output_file)
+                results = run_one_query(sql_path, opts, output_file=output_file)
+                all_results.append({"sql_name": sql_path.name, "results": results})
             except Exception as e:
                 logger.error(f"Failed to process {sql_path}: {e}")
             if i < len(sql_files):
@@ -1228,14 +1324,19 @@ def run_queries(directory: Path, opts: DbOptions, output_path: Path = None) -> N
         output_file.close()
     print(f"[INFO] Summary written to: {output_path}")
 
+    _generate_stat_table(all_results, stat_path)
+    print(f"[INFO] Stat summary written to: {stat_path}")
+
 
 def cmd_run_queries(args):
     opts = DbOptions(host=args.host, port=args.port, user=args.user,
                      database=args.database, sleep=args.sleep)
-    run_queries(Path(args.dir), opts, output_path=args.output)
+    run_queries(Path(args.dir), opts, output_path=args.output,
+                stat_path=args.stat)
 
 
-def run_proposals_all(directory: Path, opts: DbOptions, output_path: Path = None) -> None:
+def run_proposals_all(directory: Path, opts: DbOptions, output_path: Path = None,
+                      stat_path: Path = None) -> None:
     """For each .sql file under directory (recursive), call run_proposals and
     print/save a timing table prefixed with the SQL file's basename.
 
@@ -1259,13 +1360,18 @@ def run_proposals_all(directory: Path, opts: DbOptions, output_path: Path = None
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_file = open(output_path, "w", encoding="utf-8")
 
+    stat_path = Path(stat_path) if stat_path else DATA_DIR / "run_proposals_all_stat.txt"
+
     logger.info(f"Found {len(sql_files)} SQL file(s) under {directory}")
     logger.info(f"Summary output: {output_path}")
+    all_results = []
     try:
         for i, sql_path in enumerate(sql_files, 1):
             logger.info(f"--- [{i}/{len(sql_files)}] {sql_path.name} ---")
             try:
-                run_proposals(sql_path, opts, output_file=output_file, header=sql_path.name)
+                results = run_proposals(sql_path, opts, output_file=output_file,
+                                        header=sql_path.name)
+                all_results.append({"sql_name": sql_path.name, "results": results})
             except SystemExit:
                 # run_proposals exits on missing/invalid proposals file; surface
                 # the error but keep processing the remaining files.
@@ -1278,11 +1384,15 @@ def run_proposals_all(directory: Path, opts: DbOptions, output_path: Path = None
         output_file.close()
     print(f"[INFO] Summary written to: {output_path}")
 
+    _generate_stat_table(all_results, stat_path)
+    print(f"[INFO] Stat summary written to: {stat_path}")
+
 
 def cmd_run_proposals_all(args):
     opts = DbOptions(host=args.host, port=args.port, user=args.user,
                       database=args.database, sleep=args.sleep)
-    run_proposals_all(Path(args.dir), opts, output_path=args.output)
+    run_proposals_all(Path(args.dir), opts, output_path=args.output,
+                      stat_path=args.stat)
 
 
 def main():
@@ -1330,6 +1440,8 @@ def main():
     p_run_one_query.add_argument("--sql", type=str, required=True, help="Path to SQL file")
     p_run_one_query.add_argument("--sleep", type=float, default=3.0,
                                  help="Seconds to sleep between proposals (default: 3.0)")
+    p_run_one_query.add_argument("--output", type=str, default=None,
+                                 help="Summary table output file path (default: ./data/run_one_query_result.txt)")
     p_run_one_query.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
     p_run_one_query.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
     p_run_one_query.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
@@ -1341,6 +1453,8 @@ def main():
     p_run_queries.add_argument("--dir", type=str, required=True, help="Directory containing SQL files (recursive)")
     p_run_queries.add_argument("--output", type=str, default=None,
                                help="Summary table output file path (default: ./data/run_queries_result.txt)")
+    p_run_queries.add_argument("--stat", type=str, default=None,
+                               help="Stat summary table output file path (default: ./data/run_queries_stat.txt)")
     p_run_queries.add_argument("--sleep", type=float, default=3.0,
                                help="Seconds to sleep between queries (default: 3.0)")
     p_run_queries.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
@@ -1357,6 +1471,8 @@ def main():
     p_run_proposals_all.add_argument("--dir", type=str, required=True, help="Directory containing SQL files (recursive)")
     p_run_proposals_all.add_argument("--output", type=str, default=None,
                                      help="Summary table output file path (default: ./data/run_proposals_all_result.txt)")
+    p_run_proposals_all.add_argument("--stat", type=str, default=None,
+                                     help="Stat summary table output file path (default: ./data/run_proposals_all_stat.txt)")
     p_run_proposals_all.add_argument("--sleep", type=float, default=3.0,
                                      help="Seconds to sleep between SQL files (default: 3.0)")
     p_run_proposals_all.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
