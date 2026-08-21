@@ -1155,11 +1155,19 @@ def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None,
     )
 
     try:
+        logger.info("Warmup: baseline (no hint)...")
+        run_one_proposal(-1, "baseline-warmup", "", sql_content, opts)
+        time.sleep(opts.sleep)
+
         logger.info("Running baseline (no hint)...")
         results.append(run_one_proposal(0, "baseline", "", sql_content, opts))
 
-        logger.info("Running lero-baseline (SET enable_lero TO True)...")
+        logger.info("Warmup: lero-baseline (SET enable_lero TO True)...")
         lero_sql = f"SET enable_lero TO True;\n{sql_content}"
+        run_one_proposal(-1, "lero-baseline-warmup", "", lero_sql, lero_opts)
+        time.sleep(opts.sleep)
+
+        logger.info("Running lero-baseline (SET enable_lero TO True)...")
         results.append(run_one_proposal(1, "lero-baseline", "", lero_sql, lero_opts))
 
         for p in proposals:
