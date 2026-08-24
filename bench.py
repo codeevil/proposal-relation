@@ -998,6 +998,53 @@ def _generate_stat_table(results_per_query: list[dict], stat_path: Path) -> None
     logger.info(f"Stat summary written to: {stat_path}")
 
 
+def _generate_lero_stat_table(results: list[dict], stat_path: Path) -> None:
+    """Generate a summary table for the ``test-lero`` command.
+
+    For each query (identified by ``"sql_name"``), records baseline time,
+    lero time, Lero-vs-baseline speedup, Lero status and Lero error.
+
+    Writes a formatted table to ``stat_path`` with columns:
+      Query | Baseline(ms) | Lero(ms) | Speedup | Status | Error
+    """
+    stat_path = Path(stat_path)
+    stat_path.parent.mkdir(parents=True, exist_ok=True)
+
+    headers = ["Query", "Baseline(ms)", "Lero(ms)", "Speedup", "Status", "Error"]
+    rows = []
+
+    for r in results:
+        sql_name = r["sql_name"]
+        baseline_ms = r.get("baseline_ms")
+        lero_ms = r.get("lero_ms")
+        status = r.get("lero_status", "")
+        error = r.get("lero_error", "")
+        if len(error) > 40:
+            error = error[:37] + "..."
+
+        bl_str = f"{baseline_ms:.2f}" if baseline_ms else "N/A"
+        lero_str = f"{lero_ms:.2f}" if lero_ms else "N/A"
+        speedup = f"{baseline_ms / lero_ms:.2f}x" if (baseline_ms and lero_ms) else "N/A"
+
+        rows.append([sql_name, bl_str, lero_str, speedup, status, error])
+
+    if not rows:
+        logger.info("No query results to summarize.")
+        return
+
+    widths = [max(len(str(row[i])) for row in [headers] + rows) for i in range(len(headers))]
+    fmt = "  ".join(f"{{:<{w}}}" for w in widths)
+    sep = "  ".join("-" * w for w in widths)
+
+    lines = [fmt.format(*headers), sep]
+    for row in rows:
+        lines.append(fmt.format(*row))
+
+    text = "\n".join(lines) + "\n"
+    stat_path.write_text(text, encoding="utf-8")
+    logger.info(f"Lero stat summary written to: {stat_path}")
+
+
 def _strip_markdown_fence(text: str) -> str:
     text = text.strip()
     if text.startswith("```"):
@@ -1403,6 +1450,85 @@ def cmd_run_proposals_all(args):
                       stat_path=args.stat)
 
 
+def run_test_lero(sql_path: Path, opts: DbOptions) -> dict:
+    """Run warmup + baseline + lero for a single SQL file.
+
+    Reuses ``run_one_proposal`` for execution/timing. The warmup run is
+    discarded; baseline and lero results are recorded. Returns a dict with the
+    per-query summary fields consumed by ``_generate_lero_stat_table``.
+    """
+    sql_path = Path(sql_path)
+    sql_content = sql_path.read_text(encoding="utf-8").strip()
+
+    logger.info(f"Warmup for {sql_path.name}...")
+    run_one_proposal(-1, "warmup", "", sql_content, opts)
+    time.sleep(opts.sleep)
+
+    logger.info(f"Running baseline for {sql_path.name}...")
+    baseline_res = run_one_proposal(0, "baseline", "", sql_content, opts)
+    time.sleep(opts.sleep)
+
+    logger.info(f"Running lero for {sql_path.name}...")
+    lero_sql = f"SET enable_lero TO True;\n{sql_content}"
+    lero_res = run_one_proposal(1, "lero", "", lero_sql, opts)
+    time.sleep(opts.sleep)
+
+    baseline_ms = baseline_res["elapsed_ms"] if baseline_res["status"] == "ok" else None
+    lero_ms = lero_res["elapsed_ms"] if lero_res["status"] == "ok" else None
+
+    return {
+        "sql_name": sql_path.name,
+        "baseline_ms": baseline_ms,
+        "lero_ms": lero_ms,
+        "lero_status": lero_res["status"],
+        "lero_error": lero_res.get("error_msg", ""),
+    }
+
+
+def test_lero(directory: Path, opts: DbOptions, stat_path: Path = None) -> None:
+    """Run warmup + baseline + lero for every SQL file under directory (recursive).
+
+    Reuses ``discover_sql_files`` for recursive lookup and ``run_test_lero`` for
+    per-file execution. Sleeps ``opts.sleep`` between files to avoid hammering
+    the DB. Aggregates into ``lero_{database}_stat.txt`` (or ``--output``).
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        print(f"[ERROR] Directory not found: {directory}", file=sys.stderr)
+        sys.exit(1)
+
+    sql_files = discover_sql_files(directory)
+    if not sql_files:
+        print(f"[WARNING] No .sql files found under {directory}")
+        return
+
+    stat_path = Path(stat_path) if stat_path else DATA_DIR / f"lero_{opts.database}_stat.txt"
+
+    logger.info(f"Found {len(sql_files)} SQL file(s) under {directory}")
+    all_results = []
+    try:
+        for i, sql_path in enumerate(sql_files, 1):
+            logger.info(f"--- [{i}/{len(sql_files)}] {sql_path.name} ---")
+            try:
+                all_results.append(run_test_lero(sql_path, opts))
+            except Exception as e:
+                logger.error(f"Failed to process {sql_path}: {e}")
+            if i < len(sql_files):
+                time.sleep(opts.sleep)
+    finally:
+        pass
+
+    _generate_lero_stat_table(all_results, stat_path)
+    print(f"[INFO] Lero stat summary written to: {stat_path}")
+
+
+def cmd_test_lero(args):
+    opts = DbOptions(host=args.host, port=args.port, user=args.user,
+                     database=args.database, sleep=args.sleep)
+    output_path = Path(args.output) if args.output else None
+    test_lero(Path(args.dir), opts, stat_path=output_path)
+
+
 def gen_proposals_for_sql(sql_path: Path, opts: DbOptions,
                           output_dir: Path = None) -> Path:
     """Generate proposals JSON for a single SQL file (steps 1-3 of the pipeline).
@@ -1579,6 +1705,23 @@ def main():
     p_run_proposals_all.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
     p_run_proposals_all.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
     p_run_proposals_all.set_defaults(func=cmd_run_proposals_all)
+
+    # test_lero
+    p_test_lero = subparsers.add_parser(
+        "test_lero",
+        help="Run warmup + baseline + lero (SET enable_lero) for every SQL file in a directory (recursive)",
+    )
+    p_test_lero.add_argument("--dir", type=str, required=True,
+                             help="Directory containing SQL files (recursive)")
+    p_test_lero.add_argument("--output", type=str, default=None,
+                             help="Stat summary table output file path (default: ./data/lero_{database}_stat.txt)")
+    p_test_lero.add_argument("--sleep", type=float, default=3.0,
+                             help="Seconds to sleep between SQL files (default: 3.0)")
+    p_test_lero.add_argument("--database", type=str, default="dsb_10", help="Database name")
+    p_test_lero.add_argument("--host", type=str, default="127.0.0.1", help="PostgreSQL host")
+    p_test_lero.add_argument("--port", type=int, default=5432, help="PostgreSQL port")
+    p_test_lero.add_argument("--user", type=str, default="liujianzhong", help="PostgreSQL user")
+    p_test_lero.set_defaults(func=cmd_test_lero)
 
     # gen_proposals
     p_gen_proposals = subparsers.add_parser(
