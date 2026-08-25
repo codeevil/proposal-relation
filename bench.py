@@ -951,7 +951,9 @@ def _generate_stat_table(results_per_query: list[dict], stat_path: Path) -> None
                 baseline_ms = r["elapsed_ms"]
             if r["label"] == "lero-baseline" and r["status"] == "ok":
                 lero_ms = r["elapsed_ms"]
-            if r["status"] == "ok" and r["elapsed_ms"] < best_ms:
+            if (r["label"] not in ("baseline", "lero-baseline")
+                    and r["status"] in ("ok", "hint_error")
+                    and r["elapsed_ms"] < best_ms):
                 best_ms = r["elapsed_ms"]
                 best_result = r
 
