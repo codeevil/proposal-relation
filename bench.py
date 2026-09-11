@@ -5,6 +5,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -24,6 +25,8 @@ PSQL_BIN = "/home/liujianzhong/postgresql-15.5/bin/psql"
 
 DATA_DIR = Path("./data")
 PROPOSAL_PG_SCRIPT = Path(__file__).resolve().parent / "proposal_pg.py"
+PROPOSAL_ONE_PG_SCRIPT = Path(__file__).resolve().parent / "proposal_one_pg.py"
+PROPOSAL_COUNT = 20
 
 
 @dataclass
@@ -1299,6 +1302,104 @@ def gen_proposals(sql_path: Path, opts: DbOptions, stat_path: Path = None,
     return output_path
 
 
+def _parse_proposals_file(path: Path):
+    """Read and leniently parse a proposals JSON file (array of objects)."""
+    text = _escape_raw_control_chars_in_json_strings(
+        _strip_markdown_fence(Path(path).read_text(encoding="utf-8")))
+    proposals, _dropped = _parse_proposals_lenient(text)
+    if not isinstance(proposals, list):
+        raise ValueError(f"Proposals file must be a JSON array: {path}")
+    return proposals
+
+
+def gen_proposals_obo(sql_path: Path, opts: DbOptions, stat_path: Path = None,
+                      explain_path: Path = None, output_path: Path = None,
+                      proposal_count: int = PROPOSAL_COUNT) -> Path:
+    """Generate proposals by calling proposal_one_pg.py ``proposal_count`` times.
+
+    proposal_one_pg.py returns a single-element JSON array each run. This invokes
+    it repeatedly, collects every proposal object, and writes one combined JSON
+    array to ``output_path`` in the same format produced by ``gen_proposals``.
+    Returns the output path.
+    """
+    stat_path = Path(stat_path) if stat_path else DATA_DIR / f"{sql_path.stem}_stat.json"
+    explain_path = Path(explain_path) if explain_path else DATA_DIR / f"{sql_path.stem}_explain.txt"
+    output_path = Path(output_path) if output_path else DATA_DIR / f"{sql_path.stem}_proposals.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    combined = []
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        for i in range(1, proposal_count + 1):
+            tmp_path = Path(tmp_dir) / f"{sql_path.stem}_proposal_{i}.json"
+            cmd = [
+                sys.executable, str(PROPOSAL_ONE_PG_SCRIPT),
+                "--sql", str(sql_path),
+                "--stat", str(stat_path),
+                "--explain", str(explain_path),
+                "--output", str(tmp_path),
+            ]
+            logger.info(f"generating proposal {i}/{proposal_count} via proposal_one_pg.py ...")
+            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+            if result.returncode != 0:
+                print(f"[ERROR] proposal_one_pg failed: {result.stderr.strip()}", file=sys.stderr)
+                sys.exit(1)
+            if result.stdout:
+                print(result.stdout, end="")
+
+            if not tmp_path.exists():
+                logger.warning(f"proposal_one_pg produced no output for run {i}, skipping")
+                continue
+            try:
+                for p in _parse_proposals_file(tmp_path):
+                    if isinstance(p, dict):
+                        combined.append(p)
+            except Exception as e:
+                logger.warning(f"Failed to parse proposal run {i}: {e}")
+
+            if i < proposal_count:
+                time.sleep(3.0)
+
+    for idx, p in enumerate(combined, 1):
+        p["proposal_id"] = idx
+
+    output_path.write_text(
+        json.dumps(combined, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    logger.info(f"Combined {len(combined)} proposal(s) written to: {output_path}")
+    return output_path
+
+
+def gen_proposals_obo_for_sql(sql_path: Path, opts: DbOptions,
+                              output_dir: Path = None,
+                              proposal_count: int = PROPOSAL_COUNT) -> Path:
+    """Generate OBO proposals for a single SQL file (steps 1-3 of the pipeline).
+
+    Mirrors ``gen_proposals_for_sql`` but calls ``proposal_one_pg.py`` repeatedly
+    and combines the single-proposal arrays into one JSON array.
+    """
+    sql_path = Path(sql_path)
+    logger.info(f"=== Generating OBO proposals for {sql_path.name} ===")
+
+    output_dir = Path(output_dir) if output_dir else DATA_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info("Step 1/3: Generating EXPLAIN ...")
+    explain_path = gen_explain(sql_path, opts,
+                               output_path=output_dir / f"{sql_path.stem}_explain.txt")
+
+    logger.info("Step 2/3: Generating statistics ...")
+    stat_path = gen_stat(sql_path, opts,
+                         output_path=output_dir / f"{sql_path.stem}_stat.json")
+
+    logger.info("Step 3/3: Generating proposals via proposal_one_pg.py ...")
+    proposals_path = gen_proposals_obo(sql_path, opts,
+                                       stat_path=stat_path,
+                                       explain_path=explain_path,
+                                       output_path=output_dir / f"{sql_path.stem}_proposals.json",
+                                       proposal_count=proposal_count)
+
+    return proposals_path
+
+
 def run_one_query(sql_path: Path, opts: DbOptions, output_file = None):
     """Full pipeline for a single SQL file: explain -> stat -> proposals -> run.
     
@@ -1793,6 +1894,63 @@ def cmd_gen_proposals_all(args):
     gen_proposals_all(Path(args.dir), opts, output_dir=output_dir)
 
 
+def cmd_gen_proposals_obo(args):
+    sql_path = Path(args.sql)
+    if not sql_path.exists():
+        print(f"[ERROR] SQL file not found: {sql_path}", file=sys.stderr)
+        sys.exit(1)
+
+    opts = DbOptions(host=args.host, port=args.port, user=args.user,
+                     database=args.database)
+    output_dir = Path(args.output) if args.output else None
+    result = gen_proposals_obo_for_sql(sql_path, opts, output_dir=output_dir,
+                                       proposal_count=args.proposal_count)
+    print(f"[INFO] Proposals written to: {result}")
+
+
+def gen_proposals_obo_all(directory: Path, opts: DbOptions,
+                          output_dir: Path = None,
+                          proposal_count: int = PROPOSAL_COUNT) -> None:
+    """Generate OBO proposals JSON for every .sql file under directory (recursive).
+
+    Mirrors ``gen_proposals_all`` but calls ``gen_proposals_obo_for_sql`` (which
+    invokes ``proposal_one_pg.py`` repeatedly).
+    """
+    directory = Path(directory)
+    if not directory.is_dir():
+        print(f"[ERROR] Directory not found: {directory}", file=sys.stderr)
+        sys.exit(1)
+
+    sql_files = discover_sql_files(directory)
+    if not sql_files:
+        print(f"[WARNING] No .sql files found under {directory}")
+        return
+
+    output_dir = Path(output_dir) if output_dir else DATA_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    logger.info(f"Found {len(sql_files)} SQL file(s) under {directory}")
+    logger.info(f"Proposals output directory: {output_dir}")
+    for i, sql_path in enumerate(sql_files, 1):
+        logger.info(f"--- [{i}/{len(sql_files)}] {sql_path.name} ---")
+        try:
+            gen_proposals_obo_for_sql(sql_path, opts, output_dir=output_dir,
+                                      proposal_count=proposal_count)
+        except Exception as e:
+            logger.error(f"Failed to process {sql_path}: {e}")
+        if i < len(sql_files):
+            time.sleep(opts.sleep)
+    print(f"[INFO] All proposals written to: {output_dir}")
+
+
+def cmd_gen_proposals_obo_all(args):
+    opts = DbOptions(host=args.host, port=args.port, user=args.user,
+                     database=args.database, sleep=args.sleep)
+    output_dir = Path(args.output) if args.output else None
+    gen_proposals_obo_all(Path(args.dir), opts, output_dir=output_dir,
+                          proposal_count=args.proposal_count)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Benchmark utilities")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1943,6 +2101,41 @@ def main():
     p_gen_proposals_all.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
     p_gen_proposals_all.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
     p_gen_proposals_all.set_defaults(func=cmd_gen_proposals_all)
+
+    # gen_proposals_obo
+    p_gen_proposals_obo = subparsers.add_parser(
+        "gen_proposals_obo",
+        help="Generate proposals JSON for a single SQL file by calling proposal_one_pg.py repeatedly and combining the results",
+    )
+    p_gen_proposals_obo.add_argument("--sql", type=str, required=True, help="Path to SQL file")
+    p_gen_proposals_obo.add_argument("--output", type=str, default=None,
+                                     help="Output directory for generated files (default: ./data/)")
+    p_gen_proposals_obo.add_argument("--proposal_count", type=int, default=PROPOSAL_COUNT,
+                                     help=f"Number of proposal_one_pg.py calls to combine (default: {PROPOSAL_COUNT})")
+    p_gen_proposals_obo.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
+    p_gen_proposals_obo.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
+    p_gen_proposals_obo.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
+    p_gen_proposals_obo.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
+    p_gen_proposals_obo.set_defaults(func=cmd_gen_proposals_obo)
+
+    # gen_proposals_obo_all
+    p_gen_proposals_obo_all = subparsers.add_parser(
+        "gen_proposals_obo_all",
+        help="Generate proposals JSON for every SQL file in a directory by calling proposal_one_pg.py repeatedly and combining the results",
+    )
+    p_gen_proposals_obo_all.add_argument("--dir", type=str, required=True,
+                                         help="Directory containing SQL files (recursive)")
+    p_gen_proposals_obo_all.add_argument("--output", type=str, default=None,
+                                         help="Output directory for generated files (default: ./data/)")
+    p_gen_proposals_obo_all.add_argument("--proposal_count", type=int, default=PROPOSAL_COUNT,
+                                         help=f"Number of proposal_one_pg.py calls to combine (default: {PROPOSAL_COUNT})")
+    p_gen_proposals_obo_all.add_argument("--sleep", type=float, default=3.0,
+                                         help="Seconds to sleep between SQL files (default: 3.0)")
+    p_gen_proposals_obo_all.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
+    p_gen_proposals_obo_all.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
+    p_gen_proposals_obo_all.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
+    p_gen_proposals_obo_all.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
+    p_gen_proposals_obo_all.set_defaults(func=cmd_gen_proposals_obo_all)
 
     args = parser.parse_args()
     args.func(args)
