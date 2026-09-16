@@ -864,43 +864,36 @@ def run_one_proposal(proposal_id: int, label: str, hint: str, sql_content: str, 
 
 def _print_results_table(results, header: str = None, output_file = None):
     baseline_ms = None
-    lero_ms = None
     for r in results:
         if r["label"] == "baseline" and r["status"] == "ok":
             baseline_ms = r["elapsed_ms"]
-        if r["label"] == "lero-baseline" and r["status"] == "ok":
-            lero_ms = r["elapsed_ms"]
 
-    headers = ["Proposal ID", "Label", "Elapsed (ms)", "Speedup", "Speedup-Lero", "Status", "Error"]
+    headers = ["Proposal ID", "Label", "Elapsed (ms)", "Speedup", "Status", "Error"]
     rows = []
     for r in results:
         if r["status"] == "ok":
             elapsed = f"{r['elapsed_ms']:.2f}"
             speedup = f"{baseline_ms / r['elapsed_ms']:.2f}x" if baseline_ms else "N/A"
-            speedup_lero = f"{lero_ms / r['elapsed_ms']:.2f}x" if lero_ms else "N/A"
             err = ""
         elif r["status"] == "hint_error":
             elapsed = f"{r['elapsed_ms']:.2f}"
             speedup = f"{baseline_ms / r['elapsed_ms']:.2f}x" if baseline_ms else "N/A"
-            speedup_lero = f"{lero_ms / r['elapsed_ms']:.2f}x" if lero_ms else "N/A"
             err = r.get("error_msg", "")
             if len(err) > 60:
                 err = err[:57] + "..."
         elif r["status"] == "timeout":
             elapsed = "timeout"
             speedup = "N/A"
-            speedup_lero = "N/A"
             err = r.get("error_msg", "")
             if len(err) > 60:
                 err = err[:57] + "..."
         else:
             elapsed = "error"
             speedup = "N/A"
-            speedup_lero = "N/A"
             err = r.get("error_msg", "")
             if len(err) > 60:
                 err = err[:57] + "..."
-        rows.append([str(r["proposal_id"]), r["label"], elapsed, speedup, speedup_lero, r["status"], err])
+        rows.append([str(r["proposal_id"]), r["label"], elapsed, speedup, r["status"], err])
 
     widths = [max(len(str(row[i])) for row in [headers] + rows) for i in range(len(headers))]
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
@@ -927,17 +920,16 @@ def _generate_stat_table(results_per_query: list[dict], stat_path: Path) -> None
 
     For each query (identified by ``"sql_name"``), selects:
       - baseline row  (label == "baseline")
-      - lero-baseline row (label == "lero-baseline")
       - best proposal row (minimum elapsed_ms among rows with status "ok")
 
     Writes a formatted table to ``stat_path`` with columns:
-      Query | Baseline(ms) | Lero-Baseline(ms) | Best-Proposal | Best-Time(ms) | Speedup-vs-Base | Speedup-vs-Lero | Status | Error
+      Query | Baseline(ms) | Best-Proposal | Best(ms) | Speedup-Base | Status | Error
     """
     stat_path = Path(stat_path)
     stat_path.parent.mkdir(parents=True, exist_ok=True)
 
-    headers = ["Query", "Baseline(ms)", "Lero-Baseline(ms)", "Best-Proposal",
-               "Best(ms)", "Speedup-Base", "Speedup-Lero", "Status", "Error"]
+    headers = ["Query", "Baseline(ms)", "Best-Proposal",
+               "Best(ms)", "Speedup-Base", "Status", "Error"]
     rows = []
 
     for entry in results_per_query:
@@ -945,16 +937,13 @@ def _generate_stat_table(results_per_query: list[dict], stat_path: Path) -> None
         results = entry["results"]
 
         baseline_ms = None
-        lero_ms = None
         best_result = None
         best_ms = float("inf")
 
         for r in results:
             if r["label"] == "baseline" and r["status"] == "ok":
                 baseline_ms = r["elapsed_ms"]
-            if r["label"] == "lero-baseline" and r["status"] == "ok":
-                lero_ms = r["elapsed_ms"]
-            if (r["label"] not in ("baseline", "lero-baseline")
+            if (r["label"] != "baseline"
                     and r["status"] in ("ok", "hint_error")
                     and r["elapsed_ms"] < best_ms):
                 best_ms = r["elapsed_ms"]
@@ -964,7 +953,6 @@ def _generate_stat_table(results_per_query: list[dict], stat_path: Path) -> None
             best_label = best_result["label"]
             best_elapsed = f"{best_ms:.2f}"
             speedup_base = f"{baseline_ms / best_ms:.2f}x" if baseline_ms else "N/A"
-            speedup_lero = f"{lero_ms / best_ms:.2f}x" if lero_ms else "N/A"
             status = best_result["status"]
             error = best_result.get("error_msg", "")
             if len(error) > 40:
@@ -974,15 +962,13 @@ def _generate_stat_table(results_per_query: list[dict], stat_path: Path) -> None
             best_label = "N/A"
             best_elapsed = "N/A"
             speedup_base = "N/A"
-            speedup_lero = "N/A"
             status = "no_success"
             error = ""
 
         bl_str = f"{baseline_ms:.2f}" if baseline_ms else "N/A"
-        lero_str = f"{lero_ms:.2f}" if lero_ms else "N/A"
 
-        rows.append([sql_name, bl_str, lero_str, best_label, best_elapsed,
-                     speedup_base, speedup_lero, status, error])
+        rows.append([sql_name, bl_str, best_label, best_elapsed,
+                     speedup_base, status, error])
 
     if not rows:
         logger.info("No query results to summarize.")
@@ -1199,13 +1185,6 @@ def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None,
 
     results = []
 
-    lero_opts = DbOptions(
-        host="127.0.0.1",
-        port=5432,
-        user="liujianzhong",
-        database=opts.database,
-    )
-
     try:
         logger.info("Warmup: baseline (no hint)...")
         run_one_proposal(-1, "baseline-warmup", "", sql_content, opts)
@@ -1213,14 +1192,6 @@ def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None,
 
         logger.info("Running baseline (no hint)...")
         results.append(run_one_proposal(0, "baseline", "", sql_content, opts))
-
-        logger.info("Warmup: lero-baseline (SET enable_lero TO True)...")
-        lero_sql = f"SET enable_lero TO True;\n{sql_content}"
-        run_one_proposal(-1, "lero-baseline-warmup", "", lero_sql, lero_opts)
-        time.sleep(opts.sleep)
-
-        logger.info("Running lero-baseline (SET enable_lero TO True)...")
-        results.append(run_one_proposal(1, "lero-baseline", "", lero_sql, lero_opts))
 
         for p in proposals:
             pid = p.get("proposal_id")
