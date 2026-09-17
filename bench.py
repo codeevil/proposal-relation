@@ -28,6 +28,30 @@ PROPOSAL_PG_SCRIPT = Path(__file__).resolve().parent / "proposal_pg.py"
 PROPOSAL_ONE_PG_SCRIPT = Path(__file__).resolve().parent / "proposal_one_pg.py"
 PROPOSAL_COUNT = 20
 
+# Database name → data/ subdirectory name. explain/stat/proposal artifacts are
+# stored under ``data/{kind}/{db_dir}/``.
+DB_TO_DIR = {
+    "tpch": "tpch",
+    "dsb_10": "tpcds",
+    "imdb": "imdb",
+}
+
+
+def db_dir_for(database: str) -> str:
+    return DB_TO_DIR.get(database, database)
+
+
+def explain_default_path(sql_path: Path, database: str) -> Path:
+    return DATA_DIR / "explain" / db_dir_for(database) / f"{sql_path.stem}_explain.txt"
+
+
+def stat_default_path(sql_path: Path, database: str) -> Path:
+    return DATA_DIR / "stat" / db_dir_for(database) / f"{sql_path.stem}_stat.json"
+
+
+def proposal_default_path(sql_path: Path, database: str) -> Path:
+    return DATA_DIR / "proposal" / db_dir_for(database) / f"{sql_path.stem}_proposals.json"
+
 
 @dataclass
 class DbOptions:
@@ -410,7 +434,7 @@ def gen_explain(sql_path: Path, opts: DbOptions, output_path: Path = None) -> Pa
     explain_output = run_psql(f"EXPLAIN ANALYZE {sql_content}", db=opts.database,
                               host=opts.host, port=opts.port, user=opts.user)
 
-    output_path = Path(output_path) if output_path else DATA_DIR / f"{sql_path.stem}_explain.txt"
+    output_path = Path(output_path) if output_path else explain_default_path(sql_path, opts.database)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(explain_output, encoding="utf-8")
     logger.info(f"EXPLAIN ANALYZE written to: {output_path}")
@@ -428,8 +452,8 @@ def cmd_gen_explain(args):
 
     opts = DbOptions(host=args.host, port=args.port, user=args.user, database=args.database)
     output_path = Path(args.output) if args.output else None
-    gen_explain(sql_path, opts, output_path=output_path)
-    print(f"[INFO] EXPLAIN ANALYZE written to: {output_path or (DATA_DIR / f'{sql_path.stem}_explain.txt')}")
+    written = gen_explain(sql_path, opts, output_path=output_path)
+    print(f"[INFO] EXPLAIN ANALYZE written to: {written}")
 
 
 def _run_psql_with_capture(sql: str, opts: DbOptions):
@@ -1160,7 +1184,7 @@ def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None,
     """
     sql_content = sql_path.read_text(encoding="utf-8").strip()
 
-    proposals_path = proposals_path or DATA_DIR / f"{sql_path.stem}_proposals.json"
+    proposals_path = proposals_path or proposal_default_path(sql_path, opts.database)
     proposals_path = Path(proposals_path)
     if not proposals_path.exists():
         print(f"[ERROR] Proposals file not found: {proposals_path}", file=sys.stderr)
@@ -1225,8 +1249,7 @@ def gen_stat(sql_path: Path, opts: DbOptions, output_path: Path = None) -> Path:
     """Generate metadata & statistics JSON for a SQL file. Returns output path."""
     sql_content = sql_path.read_text(encoding="utf-8").strip()
 
-    output_path = output_path or DATA_DIR / f"{sql_path.stem}_stat.json"
-    output_path = Path(output_path)
+    output_path = Path(output_path) if output_path else stat_default_path(sql_path, opts.database)
 
     collector = PgMetadataCollector(
         host=opts.host, port=opts.port, user=opts.user, dbname=opts.database,
@@ -1253,9 +1276,10 @@ def cmd_gen_stat(args):
 def gen_proposals(sql_path: Path, opts: DbOptions, stat_path: Path = None,
                   explain_path: Path = None, output_path: Path = None) -> Path:
     """Invoke proposal_pg.py to generate the proposals JSON file. Returns output path."""
-    stat_path = Path(stat_path) if stat_path else DATA_DIR / f"{sql_path.stem}_stat.json"
-    explain_path = Path(explain_path) if explain_path else DATA_DIR / f"{sql_path.stem}_explain.txt"
-    output_path = Path(output_path) if output_path else DATA_DIR / f"{sql_path.stem}_proposals.json"
+    stat_path = Path(stat_path) if stat_path else stat_default_path(sql_path, opts.database)
+    explain_path = Path(explain_path) if explain_path else explain_default_path(sql_path, opts.database)
+    output_path = Path(output_path) if output_path else proposal_default_path(sql_path, opts.database)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
         sys.executable, str(PROPOSAL_PG_SCRIPT),
@@ -1779,31 +1803,44 @@ def gen_proposals_for_sql(sql_path: Path, opts: DbOptions,
     """Generate proposals JSON for a single SQL file (steps 1-3 of the pipeline).
 
     Executes:
-      1. gen_explain   → data/{stem}_explain.txt
-      2. gen_stat      → data/{stem}_stat.json
-      3. proposal_pg.py → data/{stem}_proposals.json (or custom output_dir)
+      1. gen_explain   → data/explain/{db_dir}/{stem}_explain.txt
+      2. gen_stat      → data/stat/{db_dir}/{stem}_stat.json
+      3. proposal_pg.py → data/proposal/{db_dir}/{stem}_proposals.json
 
-    Returns the path to the generated proposals file.
+    When ``output_dir`` is provided, all three files are written flat into that
+    directory instead. Returns the path to the generated proposals file.
     """
     sql_path = Path(sql_path)
     logger.info(f"=== Generating proposals for {sql_path.name} ===")
 
-    output_dir = Path(output_dir) if output_dir else DATA_DIR
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if output_dir is None:
+        logger.info("Step 1/3: Generating EXPLAIN ...")
+        explain_path = gen_explain(sql_path, opts)
 
-    logger.info("Step 1/3: Generating EXPLAIN ...")
-    explain_path = gen_explain(sql_path, opts,
-                               output_path=output_dir / f"{sql_path.stem}_explain.txt")
+        logger.info("Step 2/3: Generating statistics ...")
+        stat_path = gen_stat(sql_path, opts)
 
-    logger.info("Step 2/3: Generating statistics ...")
-    stat_path = gen_stat(sql_path, opts,
-                         output_path=output_dir / f"{sql_path.stem}_stat.json")
+        logger.info("Step 3/3: Generating proposals via proposal_pg.py ...")
+        proposals_path = gen_proposals(sql_path, opts,
+                                       stat_path=stat_path,
+                                       explain_path=explain_path)
+    else:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Step 3/3: Generating proposals via proposal_pg.py ...")
-    proposals_path = gen_proposals(sql_path, opts,
-                                   stat_path=stat_path,
-                                   explain_path=explain_path,
-                                   output_path=output_dir / f"{sql_path.stem}_proposals.json")
+        logger.info("Step 1/3: Generating EXPLAIN ...")
+        explain_path = gen_explain(sql_path, opts,
+                                   output_path=output_dir / f"{sql_path.stem}_explain.txt")
+
+        logger.info("Step 2/3: Generating statistics ...")
+        stat_path = gen_stat(sql_path, opts,
+                             output_path=output_dir / f"{sql_path.stem}_stat.json")
+
+        logger.info("Step 3/3: Generating proposals via proposal_pg.py ...")
+        proposals_path = gen_proposals(sql_path, opts,
+                                       stat_path=stat_path,
+                                       explain_path=explain_path,
+                                       output_path=output_dir / f"{sql_path.stem}_proposals.json")
 
     return proposals_path
 
@@ -1839,11 +1876,12 @@ def gen_proposals_all(directory: Path, opts: DbOptions,
         print(f"[WARNING] No .sql files found under {directory}")
         return
 
-    output_dir = Path(output_dir) if output_dir else DATA_DIR
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Found {len(sql_files)} SQL file(s) under {directory}")
-    logger.info(f"Proposals output directory: {output_dir}")
+    logger.info(f"Proposals output directory: {output_dir or '(default nested data/ structure)'}")
     try:
         for i, sql_path in enumerate(sql_files, 1):
             logger.info(f"--- [{i}/{len(sql_files)}] {sql_path.name} ---")
@@ -1855,7 +1893,7 @@ def gen_proposals_all(directory: Path, opts: DbOptions,
                 time.sleep(opts.sleep)
     finally:
         pass
-    print(f"[INFO] All proposals written to: {output_dir}")
+    print(f"[INFO] All proposals written to: {output_dir or '(default nested data/ structure)'}")
 
 
 def cmd_gen_proposals_all(args):
@@ -1929,7 +1967,7 @@ def main():
     # gen_explain
     p_gen_explain = subparsers.add_parser("gen_explain", help="Generate EXPLAIN ANALYZE output")
     p_gen_explain.add_argument("--output", type=str, default=None,
-                                help="Output file path (default: ./data/{sql_stem}_explain.txt)")
+                                help="Output file path (default: ./data/explain/{db_dir}/{sql_stem}_explain.txt)")
     p_gen_explain.add_argument("--sql", type=str, required=True, help="Path to SQL file")
     p_gen_explain.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
     p_gen_explain.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
@@ -1940,7 +1978,7 @@ def main():
     # gen_stat
     p_gen_stat = subparsers.add_parser("gen_stat", help="Generate metadata & statistics JSON")
     p_gen_stat.add_argument("--sql", type=str, required=True, help="Path to SQL file")
-    p_gen_stat.add_argument("--output", type=str, default=None, help="Output JSON file path (default: ./data/{sql_stem}_stat.json)")
+    p_gen_stat.add_argument("--output", type=str, default=None, help="Output JSON file path (default: ./data/stat/{db_dir}/{sql_stem}_stat.json)")
     p_gen_stat.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
     p_gen_stat.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
     p_gen_stat.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
@@ -1951,7 +1989,7 @@ def main():
     p_run_proposals = subparsers.add_parser("run_proposals", help="Run proposals and benchmark execution time")
     p_run_proposals.add_argument("--sql", type=str, required=True, help="Path to SQL file")
     p_run_proposals.add_argument("--proposals", type=str, default=None,
-                                 help="Path to proposals JSON file (default: ./data/{sql_stem}_proposals.json)")
+                                 help="Path to proposals JSON file (default: ./data/proposal/{db_dir}/{sql_stem}_proposals.json)")
     p_run_proposals.add_argument("--sleep", type=float, default=3.0,
                                  help="Seconds to sleep between proposals (default: 3.0)")
     p_run_proposals.add_argument("--output", type=str, default=None,
@@ -2049,7 +2087,7 @@ def main():
     )
     p_gen_proposals.add_argument("--sql", type=str, required=True, help="Path to SQL file")
     p_gen_proposals.add_argument("--output", type=str, default=None,
-                                 help="Output directory for generated files (default: ./data/)")
+                                 help="Output directory for generated files (default: ./data/{explain,stat,proposal}/{db_dir}/)")
     p_gen_proposals.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
     p_gen_proposals.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
     p_gen_proposals.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
@@ -2064,7 +2102,7 @@ def main():
     p_gen_proposals_all.add_argument("--dir", type=str, required=True,
                                      help="Directory containing SQL files (recursive)")
     p_gen_proposals_all.add_argument("--output", type=str, default=None,
-                                     help="Output directory for generated files (default: ./data/)")
+                                     help="Output directory for generated files (default: ./data/{explain,stat,proposal}/{db_dir}/)")
     p_gen_proposals_all.add_argument("--sleep", type=float, default=3.0,
                                      help="Seconds to sleep between SQL files (default: 3.0)")
     p_gen_proposals_all.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
