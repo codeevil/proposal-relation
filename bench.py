@@ -26,6 +26,7 @@ PSQL_BIN = "/home/liujianzhong/postgresql-15.5/bin/psql"
 DATA_DIR = Path("./data")
 PROPOSAL_PG_SCRIPT = Path(__file__).resolve().parent / "proposal_pg.py"
 PROPOSAL_ONE_PG_SCRIPT = Path(__file__).resolve().parent / "proposal_one_pg.py"
+PROPOSAL_RANK_PG_SCRIPT = Path(__file__).resolve().parent / "proposal_rank_pg.py"
 PROPOSAL_COUNT = 20
 
 # Database name → data/ subdirectory name. explain/stat/proposal artifacts are
@@ -55,6 +56,14 @@ def proposal_default_path(sql_path: Path, database: str) -> Path:
 
 def obo_proposal_default_path(sql_path: Path, database: str) -> Path:
     return DATA_DIR / "obo_proposal" / db_dir_for(database) / f"{sql_path.stem}_proposals.json"
+
+
+def rank_default_path(sql_path: Path, database: str) -> Path:
+    return DATA_DIR / "proposal" / db_dir_for(database) / f"{sql_path.stem}_rank.json"
+
+
+def rank_obo_default_path(sql_path: Path, database: str) -> Path:
+    return DATA_DIR / "obo_proposal" / db_dir_for(database) / f"{sql_path.stem}_rank.json"
 
 
 @dataclass
@@ -1962,6 +1971,76 @@ def cmd_gen_proposals_obo_all(args):
                           proposal_count=args.proposal_count)
 
 
+def rank_proposals_for_sql(sql_path: Path, opts: DbOptions,
+                           proposals_kind: str) -> Path:
+    """Invoke proposal_rank_pg.py for a single SQL file.
+
+    ``proposals_kind`` is the subdir under ``DATA_DIR`` holding both the input
+    proposals and the rank result (``"proposal"`` or ``"obo_proposal"``). Reads
+    ``data/{kind}/{db_dir}/{stem}_proposals.json`` and writes the rank result to
+    ``data/{kind}/{db_dir}/{stem}_rank.json``. Returns the rank output path.
+    """
+    sql_path = Path(sql_path)
+    db_dir = db_dir_for(opts.database)
+    proposals_path = DATA_DIR / proposals_kind / db_dir / f"{sql_path.stem}_proposals.json"
+    output_path = DATA_DIR / proposals_kind / db_dir / f"{sql_path.stem}_rank.json"
+
+    if not proposals_path.exists():
+        logger.warning(f"Proposals file not found: {proposals_path}; skipping {sql_path.name}")
+        return output_path
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        sys.executable, str(PROPOSAL_RANK_PG_SCRIPT),
+        "--sql", str(sql_path),
+        "--proposals", str(proposals_path),
+        "--output", str(output_path),
+    ]
+    logger.info(f"Ranking proposals for {sql_path.name} ...")
+    result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    if result.returncode != 0:
+        print(f"[ERROR] proposal_rank_pg failed: {result.stderr.strip()}", file=sys.stderr)
+    if result.stdout:
+        print(result.stdout, end="")
+    return output_path
+
+
+def rank_proposals_all(directory: Path, opts: DbOptions, proposals_kind: str) -> None:
+    """Rank proposals for every .sql file under directory, for one proposal kind."""
+    directory = Path(directory)
+    if not directory.is_dir():
+        print(f"[ERROR] Directory not found: {directory}", file=sys.stderr)
+        sys.exit(1)
+
+    sql_files = discover_sql_files(directory)
+    if not sql_files:
+        print(f"[WARNING] No .sql files found under {directory}")
+        return
+
+    output_dir = DATA_DIR / proposals_kind / db_dir_for(opts.database)
+    logger.info(f"Found {len(sql_files)} SQL file(s) under {directory}")
+    logger.info(f"Rank output directory: {output_dir}")
+    for i, sql_path in enumerate(sql_files, 1):
+        logger.info(f"--- [{i}/{len(sql_files)}] {sql_path.name} ---")
+        try:
+            rank_proposals_for_sql(sql_path, opts, proposals_kind=proposals_kind)
+        except Exception as e:
+            logger.error(f"Failed to rank {sql_path}: {e}")
+        if i < len(sql_files):
+            time.sleep(opts.sleep)
+    print(f"[INFO] Rank results written to: {output_dir}")
+
+
+def cmd_rank_proposals_all(args):
+    opts = DbOptions(database=args.database, sleep=args.sleep)
+    rank_proposals_all(Path(args.dir), opts, proposals_kind="proposal")
+
+
+def cmd_rank_proposals_all_obo(args):
+    opts = DbOptions(database=args.database, sleep=args.sleep)
+    rank_proposals_all(Path(args.dir), opts, proposals_kind="obo_proposal")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Benchmark utilities")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2147,6 +2226,30 @@ def main():
     p_gen_proposals_obo_all.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
     p_gen_proposals_obo_all.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
     p_gen_proposals_obo_all.set_defaults(func=cmd_gen_proposals_obo_all)
+
+    # rank_proposals_all
+    p_rank_proposals_all = subparsers.add_parser(
+        "rank_proposals_all",
+        help="Rank proposals via proposal_rank_pg.py for every SQL file in a directory (recursive); reads data/proposal/{db_dir}/",
+    )
+    p_rank_proposals_all.add_argument("--dir", type=str, required=True,
+                                      help="Directory containing SQL files (recursive)")
+    p_rank_proposals_all.add_argument("--sleep", type=float, default=3.0,
+                                      help="Seconds to sleep between SQL files (default: 3.0)")
+    p_rank_proposals_all.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
+    p_rank_proposals_all.set_defaults(func=cmd_rank_proposals_all)
+
+    # rank_proposals_all_obo
+    p_rank_proposals_all_obo = subparsers.add_parser(
+        "rank_proposals_all_obo",
+        help="Rank proposals via proposal_rank_pg.py for every SQL file in a directory (recursive); reads data/obo_proposal/{db_dir}/",
+    )
+    p_rank_proposals_all_obo.add_argument("--dir", type=str, required=True,
+                                          help="Directory containing SQL files (recursive)")
+    p_rank_proposals_all_obo.add_argument("--sleep", type=float, default=3.0,
+                                          help="Seconds to sleep between SQL files (default: 3.0)")
+    p_rank_proposals_all_obo.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
+    p_rank_proposals_all_obo.set_defaults(func=cmd_rank_proposals_all_obo)
 
     args = parser.parse_args()
     args.func(args)
