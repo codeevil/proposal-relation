@@ -53,6 +53,10 @@ def proposal_default_path(sql_path: Path, database: str) -> Path:
     return DATA_DIR / "proposal" / db_dir_for(database) / f"{sql_path.stem}_proposals.json"
 
 
+def obo_proposal_default_path(sql_path: Path, database: str) -> Path:
+    return DATA_DIR / "obo_proposal" / db_dir_for(database) / f"{sql_path.stem}_proposals.json"
+
+
 @dataclass
 class DbOptions:
     host: str = PGHOST
@@ -1315,11 +1319,12 @@ def gen_proposals_obo(sql_path: Path, opts: DbOptions, stat_path: Path = None,
     proposal_one_pg.py returns a single-element JSON array each run. This invokes
     it repeatedly, collects every proposal object, and writes one combined JSON
     array to ``output_path`` in the same format produced by ``gen_proposals``.
-    Returns the output path.
+    By default reads stat/explain from ``data/stat``/``data/explain`` and writes
+    the combined result to ``data/obo_proposal``. Returns the output path.
     """
-    stat_path = Path(stat_path) if stat_path else DATA_DIR / f"{sql_path.stem}_stat.json"
-    explain_path = Path(explain_path) if explain_path else DATA_DIR / f"{sql_path.stem}_explain.txt"
-    output_path = Path(output_path) if output_path else DATA_DIR / f"{sql_path.stem}_proposals.json"
+    stat_path = Path(stat_path) if stat_path else stat_default_path(sql_path, opts.database)
+    explain_path = Path(explain_path) if explain_path else explain_default_path(sql_path, opts.database)
+    output_path = Path(output_path) if output_path else obo_proposal_default_path(sql_path, opts.database)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     combined = []
@@ -1366,31 +1371,27 @@ def gen_proposals_obo(sql_path: Path, opts: DbOptions, stat_path: Path = None,
 def gen_proposals_obo_for_sql(sql_path: Path, opts: DbOptions,
                               output_dir: Path = None,
                               proposal_count: int = PROPOSAL_COUNT) -> Path:
-    """Generate OBO proposals for a single SQL file (steps 1-3 of the pipeline).
+    """Generate OBO proposals for a single SQL file.
 
-    Mirrors ``gen_proposals_for_sql`` but calls ``proposal_one_pg.py`` repeatedly
-    and combines the single-proposal arrays into one JSON array.
+    Reuses pre-existing stat/explain artifacts (read from ``data/stat`` and
+    ``data/explain`` respectively) and calls ``proposal_one_pg.py`` repeatedly,
+    combining the single-proposal arrays into one JSON array written to
+    ``data/obo_proposal/{db_dir}/``. When ``output_dir`` is provided, the
+    combined proposal is written flat into that directory instead.
     """
     sql_path = Path(sql_path)
     logger.info(f"=== Generating OBO proposals for {sql_path.name} ===")
 
-    output_dir = Path(output_dir) if output_dir else DATA_DIR
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    logger.info("Step 1/3: Generating EXPLAIN ...")
-    explain_path = gen_explain(sql_path, opts,
-                               output_path=output_dir / f"{sql_path.stem}_explain.txt")
-
-    logger.info("Step 2/3: Generating statistics ...")
-    stat_path = gen_stat(sql_path, opts,
-                         output_path=output_dir / f"{sql_path.stem}_stat.json")
-
-    logger.info("Step 3/3: Generating proposals via proposal_one_pg.py ...")
-    proposals_path = gen_proposals_obo(sql_path, opts,
-                                       stat_path=stat_path,
-                                       explain_path=explain_path,
-                                       output_path=output_dir / f"{sql_path.stem}_proposals.json",
-                                       proposal_count=proposal_count)
+    if output_dir is None:
+        proposals_path = gen_proposals_obo(sql_path, opts,
+                                           proposal_count=proposal_count)
+    else:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        proposals_path = gen_proposals_obo(
+            sql_path, opts,
+            output_path=output_dir / f"{sql_path.stem}_proposals.json",
+            proposal_count=proposal_count)
 
     return proposals_path
 
@@ -1935,11 +1936,12 @@ def gen_proposals_obo_all(directory: Path, opts: DbOptions,
         print(f"[WARNING] No .sql files found under {directory}")
         return
 
-    output_dir = Path(output_dir) if output_dir else DATA_DIR
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if output_dir is not None:
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     logger.info(f"Found {len(sql_files)} SQL file(s) under {directory}")
-    logger.info(f"Proposals output directory: {output_dir}")
+    logger.info(f"Proposals output directory: {output_dir or '(data/obo_proposal/<db_dir>)'}")
     for i, sql_path in enumerate(sql_files, 1):
         logger.info(f"--- [{i}/{len(sql_files)}] {sql_path.name} ---")
         try:
@@ -1949,7 +1951,7 @@ def gen_proposals_obo_all(directory: Path, opts: DbOptions,
             logger.error(f"Failed to process {sql_path}: {e}")
         if i < len(sql_files):
             time.sleep(opts.sleep)
-    print(f"[INFO] All proposals written to: {output_dir}")
+    print(f"[INFO] All proposals written to: {output_dir or '(data/obo_proposal/<db_dir>)'}")
 
 
 def cmd_gen_proposals_obo_all(args):
@@ -2118,7 +2120,7 @@ def main():
     )
     p_gen_proposals_obo.add_argument("--sql", type=str, required=True, help="Path to SQL file")
     p_gen_proposals_obo.add_argument("--output", type=str, default=None,
-                                     help="Output directory for generated files (default: ./data/)")
+                                     help="Output directory for generated proposals (default: ./data/obo_proposal/{db_dir}/)")
     p_gen_proposals_obo.add_argument("--proposal_count", type=int, default=PROPOSAL_COUNT,
                                      help=f"Number of proposal_one_pg.py calls to combine (default: {PROPOSAL_COUNT})")
     p_gen_proposals_obo.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
@@ -2135,7 +2137,7 @@ def main():
     p_gen_proposals_obo_all.add_argument("--dir", type=str, required=True,
                                          help="Directory containing SQL files (recursive)")
     p_gen_proposals_obo_all.add_argument("--output", type=str, default=None,
-                                         help="Output directory for generated files (default: ./data/)")
+                                         help="Output directory for generated proposals (default: ./data/obo_proposal/{db_dir}/)")
     p_gen_proposals_obo_all.add_argument("--proposal_count", type=int, default=PROPOSAL_COUNT,
                                          help=f"Number of proposal_one_pg.py calls to combine (default: {PROPOSAL_COUNT})")
     p_gen_proposals_obo_all.add_argument("--sleep", type=float, default=3.0,
