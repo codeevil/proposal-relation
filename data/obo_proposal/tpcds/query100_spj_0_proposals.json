@@ -1,0 +1,284 @@
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "通过校正关键表行数估计偏差、优化连接顺序并强制哈希连接，消除嵌套循环导致的中间结果膨胀与重复扫描问题，显著提升执行效率",
+    "core_optimization_points": [
+      "校正customer与customer_demographics连接后的结果集行数估计，实际仅约1.7万行，但优化器估计为16万行，偏差超9倍，使用Rows Hint修正为真实规模",
+      "调整连接顺序为：date_dim → customer → customer_demographics → store_sales s1 → item item1 → store_sales s2 → item item2，将小结果集驱动表前置，避免早期中间结果膨胀",
+      "强制customer与customer_demographics之间使用HashJoin，替代低效的嵌套循环，避免因c_current_cdemo_sk关联导致的重复扫描",
+      "强制s1与date_dim使用HashJoin，替代原嵌套循环，提升大表连接效率",
+      "强制s1与item1之间使用IndexOnlyScan，利用已有的覆盖索引减少回表开销",
+      "提升s1与s2的扫描并行度至4，加速大表扫描过程，充分利用多核资源"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.112) Leading( (date_dim (customer (customer_demographics (store_sales s1 (item item1)))) (store_sales s2 (item item2))) ) HashJoin(customer customer_demographics) HashJoin(store_sales s1 date_dim) IndexOnlyScan(item item1 _dta_index_item_6_853578079__k13_k11_k1) Parallel(store_sales s1 4) Parallel(store_sales s2 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自：1）纠正行数估计偏差，避免嵌套循环对大表的千万级循环扫描；2）通过哈希连接替代嵌套循环，将O(n×m)复杂度降为O(n+m)；3）使用IndexOnlyScan消除回表开销；4）并行扫描加速大表扫描，整体执行路径更符合数据规模与索引特征"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "校正统计信息偏差，优化连接顺序并强制哈希连接，消除嵌套循环对大表的指数级扫描开销",
+    "core_optimization_points": [
+      "识别并校正customer与customer_demographics连接后结果集的严重低估，实际行数远高于估计值，使用Rows Hint修正",
+      "调整连接顺序为：date_dim → store_sales s1 → customer → customer_address → customer_demographics → item1 → item2 → store_sales s2，使高选择性过滤尽早执行，控制中间结果膨胀",
+      "强制s1与customer之间使用HashJoin，替代原嵌套循环，避免因customer表行数估计偏低导致的嵌套循环无限循环扫描",
+      "强制item1与s1、item2与s2之间使用IndexOnlyScan，利用覆盖索引避免回表，降低IO开销",
+      "提升store_sales s1和store_sales s2的并行度至4，加速大表扫描",
+      "禁用customer_address的SeqScan，强制其通过主键索引扫描，避免全表扫描"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.3) Leading( (date_dim (s1 (customer (customer_address customer_demographics)) (item1 item2)) s2) ) HashJoin(s1 customer) IndexOnlyScan(item1 item_pkey) IndexOnlyScan(item2 item_pkey) IndexOnlyScan(customer_address customer_address_pkey) Parallel(s1 4) Parallel(s2 4) NoSeqScan(customer_address) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正customer与customer_demographics连接后结果集估计偏差（原估计约1.8万行，实际约5.4万行），避免嵌套循环被误判为低代价路径；2）强制哈希连接替代嵌套循环，消除对s1的千万级循环扫描；3）利用仅索引扫描减少回表IO；4）并行加速大表扫描。整体执行计划从O(N²)级嵌套循环跃迁至O(N log N)级哈希连接，性能质变。"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "通过校正中间结果集行数估计偏差，强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正customer与customer_demographics连接后的中间结果集行数估计偏差，优化器低估实际匹配行数，强制乘以修正系数0.1以匹配真实数据规模",
+      "调整连接顺序为：date_dim → store_sales s1 → customer → customer_address → customer_demographics → item1 → store_sales s2 → item2，使高选择性过滤的date_dim与s1先行连接，避免早期中间结果膨胀",
+      "强制s1与customer之间使用哈希连接，替代原嵌套循环连接，解决因customer实际行数远超估计值导致的内层循环爆炸问题",
+      "强制item1与s1、item2与s2之间使用索引扫描，确保高效定位，避免回表开销",
+      "提升store_sales s1与s2表的并行度至4，充分利用大表扫描的并行潜力，降低IO瓶颈",
+      "通过Rows Hint修正s1与customer连接后的行数估计，避免后续连接路径误判"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.1) Leading( (date_dim (s1 (customer (customer_address customer_demographics))) (item1 (s2 item2))) ) HashJoin(s1 customer) IndexScan(item1 item_pkey) IndexScan(item2 item_pkey) Parallel(s1 4) Parallel(s2 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）消除嵌套循环对大表customer的千万级循环扫描；2）通过准确的行数估计避免错误的连接路径选择；3）并行扫描加速store_sales大表的扫描过程；4）强制哈希连接提升连接效率，整体执行计划从低效嵌套循环树重构为高效哈希连接流水线"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "通过校正关键表行数估计偏差、优化连接顺序并强制使用哈希连接，消除嵌套循环引发的中间结果膨胀与重复扫描，显著降低整体执行耗时",
+    "core_optimization_points": [
+      "校正customer与customer_demographics连接后结果集的行数估计偏差，实际仅约1.8万行，但优化器估计为17.8k，需乘以0.1修正以避免后续连接误判",
+      "调整连接顺序为date_dim → store_sales (s1) → customer → customer_demographics → item1 → store_sales (s2) → item2，将小结果集驱动表前置，控制中间结果集增长",
+      "强制store_sales (s1)与customer之间使用HashJoin，替代原低效嵌套循环，避免因customer表实际行数远超估计导致内层s1被重复扫描数万次",
+      "强制item1与s1之间使用IndexOnlyScan，利用覆盖索引避免回表，提升扫描效率",
+      "提升store_sales (s1)与customer的并行度至4，加速大表扫描与哈希构建",
+      "强制item2与s2之间使用IndexScan，确保高选择性过滤条件下索引命中"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.1) Leading( (date_dim (s1 (customer (customer_demographics (item1 (s2 item2))))) ) ) HashJoin(s1 customer) IndexOnlyScan(item1 _dta_index_item_6_853578079__k13_k11_k1) Parallel(s1 4) Parallel(customer 4) IndexScan(item2 _dta_index_item_6_853578079__k13_k11_k1) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）消除因customer表实际行数被严重低估导致的嵌套循环无限循环扫描；2）通过哈希连接替代嵌套循环，将O(n×m)复杂度降至O(n+m)；3）利用IndexOnlyScan减少回表IO；4）并行加速大表扫描，整体执行路径从‘低效嵌套循环+全表扫描’转变为‘高效哈希连接+覆盖索引+并行扫描’的最优组合"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "校正统计信息偏差，强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正customer与customer_demographics连接后的中间结果集行数估计，修正优化器对小结果集的严重低估（实际约1.8万行，估计仅1.78万行，偏差小于10倍，但需确保后续连接不被误判）",
+      "强制将customer作为驱动表，通过Leading优化连接顺序，避免早期连接产生过早膨胀的中间结果",
+      "强制customer与customer_demographics使用HashJoin，替代原嵌套循环连接，避免因外层循环次数过多导致的性能退化",
+      "强制store_sales s1与date_dim使用HashJoin，避免因date_dim过滤后行数少但未被有效利用而导致的低效嵌套循环",
+      "强制item1与s1使用IndexOnlyScan，利用覆盖索引减少回表开销，提升扫描效率",
+      "提升store_sales s1和s2的并行度至4，加速大表扫描，充分利用多核资源",
+      "通过RowsHint校正s1与s2连接后的中间结果集规模，防止优化器因估计偏差而错误选择嵌套循环"
+    ],
+    "hint_combination": "/*+ Rows(s1 s2 *0.5) Leading( (customer (customer_demographics (date_dim (item1 (item2 (s1 s2)))))) ) HashJoin(customer customer_demographics) HashJoin(s1 date_dim) IndexOnlyScan(item1 _dta_index_item_6_853578079__k13_k11_k1) IndexOnlyScan(item2 item_pkey) Parallel(s1 4) Parallel(s2 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）消除嵌套循环对大表s1/s2的千万级循环扫描；2）通过HashJoin加速关键连接，避免外层驱动表行数膨胀；3）IndexOnlyScan减少回表开销；4）并行扫描显著加速大表扫描；5）RowsHint校正估计偏差，确保优化器选择正确路径"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "校正统计信息偏差，重构连接顺序并强制哈希连接，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正customer与customer_demographics连接后的中间结果集估计偏差，优化器低估实际行数约10倍，强制修正为真实规模",
+      "调整连接顺序为date_dim→store_sales→item→item→customer→customer_address，优先处理小结果集过滤，避免早期中间结果膨胀",
+      "强制store_sales与customer之间使用哈希连接，替代低效嵌套循环，避免因驱动表行数膨胀导致内层扫描重复执行",
+      "强制item1与item2的连接使用嵌套循环（因i_item_sk < i_item_sk为非等值连接，且结果集小），但通过索引扫描避免全表扫描",
+      "提升store_sales表并行度至8，充分利用大表扫描的并行潜力，降低IO瓶颈",
+      "强制date_dim使用索引仅扫描（IndexOnlyScan），避免全表扫描并减少回表开销"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.1) Leading( (date_dim (store_sales (item item1) (item item2)) (customer (customer_address customer_demographics))) ) HashJoin(store_sales customer) HashJoin(customer customer_demographics) IndexOnlyScan(date_dim _dta_index_date_dim_6_661577395__k7_k1) Parallel(store_sales 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正customer连接后结果集估计偏差，避免嵌套循环对store_sales的数万次重复扫描；2）强制哈希连接消除嵌套循环的指数级开销；3）提升store_sales并行度加速大表扫描；4）通过IndexOnlyScan减少date_dim的IO开销。整体执行路径从‘嵌套循环+顺序扫描’优化为‘哈希连接+并行索引扫描’，性能跃迁显著。"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "通过校正中间结果集行数估计偏差、优化连接顺序并强制哈希连接，消除嵌套循环的指数级性能瓶颈，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正customer与customer_demographics连接后的中间结果集行数估计偏差，优化器低估实际匹配行数，需乘以修正系数0.5以反映真实数据规模",
+      "调整连接顺序为：date_dim → customer → customer_demographics → store_sales s1 → item item1 → store_sales s2 → item item2 → customer_address，确保小结果集先行连接，避免早期中间结果膨胀",
+      "强制customer与customer_demographics之间使用HashJoin，替代原嵌套循环连接，显著降低大表连接开销",
+      "强制store_sales s1与date_dim之间使用HashJoin，替代原嵌套循环+索引扫描结构，提升等值连接效率",
+      "强制item1与s1之间使用IndexOnlyScan，利用覆盖索引避免回表，减少IO开销",
+      "提升store_sales s1和store_sales s2的并行度至4，加速大表扫描与连接操作",
+      "使用Rows Hint校正s1与s2连接后结果集的估计偏差，避免后续嵌套循环被错误触发"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.5) Leading( (date_dim (customer (customer_demographics (store_sales s1 (item item1 (store_sales s2 (item item2 (customer_address)))))))) ) HashJoin(customer customer_demographics) HashJoin(store_sales s1 date_dim) IndexOnlyScan(item item1 _dta_index_item_6_853578079__k13_k11_k1) Parallel(store_sales s1 4) Parallel(store_sales s2 4) Rows(store_sales s1 store_sales s2 *0.2) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环对store_sales表的千万级循环扫描；2）通过哈希连接加速大表等值连接；3）利用仅索引扫描减少回表IO；4）并行加速大表扫描；5）校正估计偏差使优化器选择正确路径，避免错误执行计划。整体性能瓶颈由原计划的嵌套循环+全表扫描，转变为高效哈希连接+并行扫描+覆盖索引，实现质的飞跃。"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "校正严重行数估计偏差，优化连接顺序并强制哈希连接，消除嵌套循环对大表的指数级扫描开销",
+    "core_optimization_points": [
+      "修正customer与customer_demographics连接后结果集的严重低估（估计17813行，实际约17813×1.0，但实际过滤后行数应为约17813×(1-0.0358)≈17140，但优化器误估为17813，偏差可忽略，但后续连接中实际行数远高于估计）",
+      "识别并修正store_sales s1与customer连接后结果集的严重低估：优化器估计26行，实际应为约161290×(0.043166667+0.035833333)×(1/10)≈1700行，估计值26行严重偏低，需通过Rows Hint校正",
+      "调整连接顺序为：date_dim → item1 → s1 → customer → customer_demographics → customer_address，将小结果集date_dim（594行）作为驱动表，避免早期膨胀",
+      "强制s1与customer之间使用HashJoin，替代原嵌套循环，避免对s1的重复扫描（原计划中s1被扫描了约45次）",
+      "强制item1与s1之间使用IndexOnlyScan，避免回表开销，因s1.ss_item_sk = item1.i_item_sk且item1.i_category已过滤，索引覆盖充分",
+      "提升store_sales s1与s2的并行度至4，加速大表扫描，因s1表达2879万行，适合并行",
+      "禁用customer_address的SeqScan，强制其通过索引扫描，因ca_address_sk为主键，且与c_current_addr_sk连接"
+    ],
+    "hint_combination": "/*+ Rows(s1 *65.4) Leading( (date_dim (item1 (s1 (customer (customer_demographics customer_address)))) ) ) HashJoin(s1 customer) IndexOnlyScan(item1 item_pkey) Parallel(s1 4) Parallel(s2 4) NoSeqScan(customer_address) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）校正s1连接后行数估计偏差，避免优化器误选嵌套循环；2）强制HashJoin替代嵌套循环，消除对s1的重复扫描（原计划中s1被扫描45次，现仅扫描1次）；3）使用IndexOnlyScan减少回表开销；4）提升并行度加速大表扫描；5）合理连接顺序控制中间结果膨胀"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "通过校正中间结果集估计偏差、强制最优连接顺序与哈希连接、优化扫描路径，消除嵌套循环性能瓶颈并提升并行效率",
+    "core_optimization_points": [
+      "校正customer与customer_demographics连接后的中间结果集估计偏差，实际行数远小于优化器估计，使用Rows Hint修正为原估计的1/10",
+      "调整连接顺序为date_dim→store_sales→item→customer→customer_address→customer_demographics，将小结果集的日期过滤表作为驱动起点，避免早期大表膨胀",
+      "强制store_sales与customer之间使用HashJoin，替代低效嵌套循环，解决因customer实际行数远大于估计值导致的内层循环爆炸问题",
+      "强制item1与item2的连接使用Nested Loop，因两表均为小结果集且有主键索引，嵌套循环性能最优",
+      "强制使用Index Only Scan扫描date_dim，因其d_year过滤后结果集小且索引覆盖所需字段",
+      "提升store_sales表并行度至8，充分利用大表扫描的并行潜力，加速数据读取"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.1) Leading( (date_dim (store_sales (item item2)) (customer (customer_address customer_demographics))) ) HashJoin(store_sales customer) NoNestLoop(store_sales customer) IndexOnlyScan(date_dim _dta_index_date_dim_6_661577395__k7_k1) Parallel(store_sales 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环对store_sales的千万级重复扫描；2）修正统计信息偏差后优化器选择更优连接顺序；3）通过并行扫描加速大表数据读取；4）避免不必要的回表与全表扫描"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "通过校正中间结果集行数估计偏差，强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正customer与customer_demographics连接后的中间结果集行数估计偏差，优化器低估实际行数约10倍，需乘以修正系数0.1",
+      "调整连接顺序为：date_dim → store_sales(s1) → item(item1) → customer → customer_address → customer_demographics → store_sales(s2) → item(item2)，将高选择性过滤的date_dim和s1作为驱动起点，避免早期中间结果膨胀",
+      "强制s1与customer之间使用HashJoin，替代原嵌套循环，解决因customer实际行数远高于估计值导致的内层循环扫描开销",
+      "强制item1与s1之间使用IndexOnlyScan，利用覆盖索引减少回表开销，提升扫描效率",
+      "强制item2与s2之间使用IndexScan，利用i_manager_id范围索引快速定位目标行",
+      "提升store_sales(s1)表并行度至4，加速大表扫描与哈希构建",
+      "禁用customer_address的SeqScan，强制使用IndexOnlyScan，避免全表扫描"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.1) Leading( (date_dim (store_sales s1 (item item1 (customer (customer_address) (customer_demographics)) (store_sales s2 (item item2)))) ) ) HashJoin(s1 customer) IndexOnlyScan(item1) IndexScan(item2) Parallel(s1 4) NoSeqScan(customer_address) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）消除因估计偏差导致的嵌套循环千万级循环扫描；2）通过哈希连接加速大表连接；3）利用覆盖索引减少回表IO；4）提升并行度加速大表扫描。整体执行计划从左深嵌套循环树重构为高效分层哈希连接结构，显著降低IO与CPU开销。"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "校正统计信息偏差，重构连接顺序并强制哈希连接，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正customer与customer_demographics连接后的中间结果集估计偏差，实际行数远低于优化器估计，需乘以0.1修正",
+      "调整连接顺序为date_dim→store_sales→item1→item2→customer→customer_address，优先处理小结果集过滤，控制中间结果膨胀",
+      "强制store_sales与customer之间使用HashJoin，替代低效的嵌套循环连接，避免因驱动表行数估计错误导致内表被循环扫描数万次",
+      "强制item1与item2的连接使用HashJoin，避免因等值连接且结果集较大时误用嵌套循环",
+      "提升store_sales表并行度至8，充分利用大表扫描的并行潜力，加速数据读取",
+      "强制date_dim使用IndexOnlyScan，避免全表扫描，利用d_year索引快速定位时间范围"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.1) Leading( (date_dim (store_sales (item1 item2)) (customer customer_address)) ) HashJoin(store_sales customer) HashJoin(item1 item2) Parallel(store_sales 8) IndexOnlyScan(date_dim _dta_index_date_dim_6_661577395__k7_k1) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）纠正customer连接结果集估计偏差（原估计16万行，实际约1.6万行），避免嵌套循环对store_sales的过度扫描；2）强制哈希连接替代嵌套循环，消除千万级循环开销；3）提升store_sales并行度，加速大表扫描；4）利用覆盖索引避免回表，减少IO。整体实现从‘嵌套循环+全表扫描’向‘哈希连接+并行+覆盖扫描’的性能跃迁。"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "校正严重行数估计偏差，优化连接顺序并强制哈希连接，消除嵌套循环性能瓶颈，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "修正customer与customer_demographics连接后结果集的严重低估，实际行数远高于估计值，通过Rows Hint校正为原估计的10倍",
+      "调整连接顺序为：date_dim → store_sales s1 → customer → customer_address → customer_demographics → item1 → store_sales s2 → item2，将小结果集的日期维度作为驱动起点，避免早期中间结果膨胀",
+      "强制s1与customer之间使用HashJoin，替代原低效嵌套循环，避免因customer表过滤后行数被低估导致内层s1表被循环扫描数万次",
+      "强制s1与date_dim之间使用HashJoin，替代原嵌套循环+索引扫描组合，提升大表连接效率",
+      "提升store_sales s1与store_sales s2的并行度至4，加速大表扫描与连接操作",
+      "强制item1与s1之间使用IndexOnlyScan，利用覆盖索引避免回表，减少IO开销"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *10) Leading( (date_dim s1 customer customer_address customer_demographics item1 s2 item2) ) HashJoin(s1 customer) HashJoin(s1 date_dim) IndexOnlyScan(item1 _dta_index_item_6_853578079__k13_k11_k1) Parallel(s1 4) Parallel(s2 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）校正customer连接后行数估计偏差，避免嵌套循环对s1表进行数万次重复扫描；2）通过哈希连接替代嵌套循环，显著降低大表连接开销；3）并行扫描加速store_sales大表处理；4）仅索引扫描减少回表IO。整体执行计划将从当前的‘嵌套循环+顺序扫描’结构，转变为‘哈希连接+并行扫描+仅索引扫描’的高性能路径。"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "通过校正中间结果集行数估计偏差、强制最优连接顺序与哈希连接，消除嵌套循环的指数级性能瓶颈，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正customer与customer_demographics连接后的中间结果集行数估计偏差，优化器低估实际匹配行数，需乘以修正系数0.5以反映真实规模",
+      "调整连接顺序为：date_dim → store_sales s1 → customer → customer_address → customer_demographics → item1 → store_sales s2 → item2，确保小结果集先行过滤并作为驱动表",
+      "强制store_sales s1与customer之间使用哈希连接，替代原低效嵌套循环，避免因customer实际行数远超估计值导致内层s1被循环扫描数万次",
+      "强制item1与s1、item2与s2之间使用索引扫描，确保仅索引扫描（IndexOnlyScan）路径被启用，避免回表开销",
+      "提升store_sales s1与s2的并行扫描并行度至4，利用其大表特性充分并行化IO密集型操作"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.5) Leading( (date_dim (s1 (customer (customer_address customer_demographics))) (item1 (s2 item2))) ) HashJoin(s1 customer) IndexOnlyScan(item1) IndexOnlyScan(item2) Parallel(s1 4) Parallel(s2 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环对store_sales的千万级重复扫描；2）通过Rows Hint校正连接后结果集估计偏差，避免优化器误选低效路径；3）并行化大表扫描，充分利用多核CPU资源；4）强制使用仅索引扫描，消除回表开销，显著降低IO与CPU代价"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "通过校正中间结果集估计偏差、强制哈希连接并优化连接顺序，消除嵌套循环导致的指数级性能瓶颈，显著降低整体执行耗时",
+    "core_optimization_points": [
+      "校正customer与customer_demographics连接后的中间结果集行数估计偏差，优化器低估实际结果集规模，导致后续连接顺序错误",
+      "强制customer与customer_demographics使用哈希连接，替代低效的嵌套循环连接，避免因小表驱动大表而引发的扫描膨胀",
+      "调整连接顺序为(date_dim → (customer → customer_demographics) → (item1 → store_sales s1) → (item2 → store_sales s2))，确保高选择性过滤尽早执行，控制中间结果集增长",
+      "强制s1与date_dim使用哈希连接，避免因date_dim小表被误判为内表而引发嵌套循环性能问题",
+      "提升store_sales s1和s2的并行度至4，充分利用大表扫描的并行潜力，加速数据读取",
+      "强制item1和item2使用索引扫描（覆盖索引），避免回表开销，提升连接效率"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.1) HashJoin(customer customer_demographics) Leading( (date_dim (customer customer_demographics) (item1 s1) (item2 s2)) ) HashJoin(s1 date_dim) Parallel(s1 4) Parallel(s2 4) IndexScan(item1 item_pkey) IndexScan(item2 item_pkey) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除原计划中因低估customer与customer_demographics连接结果集（实际约17,813行，估计仅1,781行）导致的错误连接顺序；2）将原嵌套循环的O(n²)扫描改为哈希连接的O(n)线性连接；3）通过并行加速大表store_sales扫描；4）避免不必要的回表，提升索引使用效率。整体执行路径从高成本的嵌套循环树重构为高效、低膨胀的哈希连接流。"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "校正统计信息偏差，优化连接顺序并强制哈希连接，消除嵌套循环性能瓶颈，提升并行效率",
+    "core_optimization_points": [
+      "校正customer与customer_demographics连接后的中间结果集估计偏差，实际行数远低于优化器估计，强制乘以0.1修正",
+      "调整连接顺序为date_dim → store_sales(s1) → item(item1) → customer → customer_address → customer_demographics → store_sales(s2) → item(item2)，使小结果集驱动大表连接，避免早期中间结果膨胀",
+      "强制s1与date_dim使用HashJoin，替代原低效的嵌套循环连接，减少对大表store_sales的重复扫描",
+      "强制s1与customer之间使用HashJoin，避免因customer过滤后行数估计不准导致的嵌套循环性能崩溃",
+      "强制item1与s1之间使用IndexOnlyScan，利用覆盖索引避免回表，提升扫描效率",
+      "强制item2与s2之间使用IndexScan，确保其过滤条件能有效命中索引",
+      "提升store_sales(s1)和store_sales(s2)的并行度至4，加速大表扫描",
+      "禁用customer_address的SeqScan，强制使用IndexOnlyScan以避免全表扫描"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.1) Leading( (date_dim (s1 (item1 (customer (customer_address customer_demographics))))) (s2 item2) ) HashJoin(s1 date_dim) HashJoin(s1 customer) IndexOnlyScan(item1) IndexScan(item2) Parallel(s1 4) Parallel(s2 4) NoSeqScan(customer_address) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）校正customer连接结果集估计偏差，避免嵌套循环对store_sales的千万级重复扫描；2）强制哈希连接替代嵌套循环，大幅降低大表连接代价；3）利用IndexOnlyScan减少回表IO；4）提升并行度加速大表扫描；5）避免不必要的全表扫描。整体执行路径从‘高代价嵌套循环+错误估计’转向‘高效哈希连接+并行扫描+覆盖索引’的最优组合。"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "校正严重行数估计偏差，强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈并提升并行度",
+    "core_optimization_points": [
+      "修正customer与customer_demographics连接后结果集的严重低估，实际行数远高于估计值，使用Rows Hint校正",
+      "调整连接顺序为date_dim→store_sales→item1→item2→customer→customer_address，将小结果集date_dim作为驱动起点，避免早期中间结果膨胀",
+      "强制store_sales与customer之间使用HashJoin，替代低效的嵌套循环，避免因customer表扫描行数过多导致内层循环爆炸",
+      "强制item1与item2的连接使用HashJoin，避免因item1.i_category过滤后仍需大量嵌套循环遍历item2",
+      "提升store_sales与item表的并行度，加速大表扫描，充分利用多核资源"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.1) Leading( (date_dim (store_sales (item1 (item2 (customer customer_address)))) ) ) HashJoin(store_sales customer) HashJoin(item1 item2) Parallel(store_sales 4) Parallel(item1 4) Parallel(item2 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）纠正customer与customer_demographics连接后结果集被低估10倍以上的错误估计，避免嵌套循环对大结果集的指数级扫描；2）将原本低效的嵌套循环连接强制替换为哈希连接，消除内层循环爆炸问题；3）提升关键大表并行度，加速扫描与连接过程；4）优化连接顺序，使中间结果集增长平缓，避免早期产生超大中间结果。"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "校正统计信息偏差，优化连接顺序并强制哈希连接，消除嵌套循环对大表的指数级扫描开销",
+    "core_optimization_points": [
+      "识别并校正customer与customer_demographics连接后结果集的严重低估（估计17813行，实际仅约17813行，但后续连接因行数膨胀导致计划失准），通过Rows Hint修正中间结果集估计偏差",
+      "调整连接顺序为：date_dim → store_sales s1 → customer → customer_address → customer_demographics → item1 → store_sales s2 → item2，使小结果集驱动大表连接，避免早期中间结果膨胀",
+      "强制s1与customer之间使用HashJoin，替代原低效的嵌套循环连接（因customer表过滤后结果集约17813行，s1表大但连接键有索引，哈希连接更优）",
+      "强制item1与s1之间使用IndexOnlyScan，利用覆盖索引避免回表，减少IO开销",
+      "提升store_sales s1与customer的并行度至4，加速大表扫描与哈希构建",
+      "强制item2与s2之间使用IndexScan，确保高效定位满足i_manager_id条件的行"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *1.0) Leading( (date_dim (s1 (customer (customer_address customer_demographics)) (item1 (s2 item2)))) ) HashJoin(s1 customer) IndexOnlyScan(item1 _dta_index_store_sales_6_1333579789__k1_k3_k10_k4_k8_23) Parallel(s1 4) Parallel(customer 4) IndexScan(item2 _dta_index_item_6_853578079__k13_k11_k1) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环对store_sales s1的千万级循环扫描；2）通过哈希连接替代嵌套循环，降低大表连接代价；3）利用IndexOnlyScan减少回表IO；4）并行加速大表扫描。统计信息偏差校正使优化器能正确选择高效路径。"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "校正统计信息偏差，强制优化连接顺序与连接方法，消除嵌套循环性能瓶颈并提升并行效率",
+    "core_optimization_points": [
+      "校正customer与customer_demographics连接后的中间结果集估计偏差，实际行数远小于优化器估计值，使用Rows Hint修正",
+      "调整连接顺序为date_dim→store_sales→item1→item2→customer→customer_address，优先处理高选择性过滤表，控制中间结果膨胀",
+      "强制store_sales与customer之间使用哈希连接，替代低效的嵌套循环连接，避免因驱动表行数膨胀导致内表扫描次数剧增",
+      "强制item1与item2的连接使用嵌套循环并启用Memoize缓存，提升等值连接效率，避免重复扫描",
+      "提升store_sales表并行度至8，充分利用大表扫描的并行潜力，加速数据读取"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.1) Leading( (date_dim (store_sales (item1 (item2 (customer customer_address)))) ) ) HashJoin(store_sales customer) Memoize(item1 item2) Parallel(store_sales 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正customer连接结果集估计偏差，避免嵌套循环因驱动表规模误判而产生数百万次循环；2）强制哈希连接替代嵌套循环，消除O(n²)扫描开销；3）通过Memoize缓存减少item1/item2连接中重复索引扫描；4）并行度提升显著加速大表store_sales的扫描与连接阶段。整体执行路径从原计划的高IO、高CPU、高循环变为低延迟、高吞吐的并行化高效路径。"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "通过校正关键表行数估计偏差、强制哈希连接替代嵌套循环、优化连接顺序并提升并行度，消除大表嵌套循环性能瓶颈，实现整体执行耗时显著下降",
+    "core_optimization_points": [
+      "校正customer与customer_demographics连接后的中间结果集估计偏差，实际行数远小于优化器估计，强制乘以0.1系数修正",
+      "调整连接顺序为：date_dim → store_sales s1 → customer → customer_address → customer_demographics → item1 → store_sales s2 → item2，将小结果集驱动表前置，避免早期中间结果膨胀",
+      "强制store_sales s1与customer之间使用HashJoin，替代原低效的嵌套循环连接，避免因customer行数被低估导致内层s1被循环扫描数万次",
+      "强制item1与s1之间使用IndexOnlyScan，利用覆盖索引避免回表，提升扫描效率",
+      "提升store_sales s1与store_sales s2的并行度至4，加速大表扫描与连接过程",
+      "强制s1与s2的连接使用HashJoin，避免嵌套循环在ss_ticket_number上进行全表探测"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.1) Leading( (date_dim (s1 (customer (customer_address customer_demographics))) (item1 (s2 item2))) ) HashJoin(s1 customer) IndexOnlyScan(item1 _dta_index_item_6_853578079__k13_k11_k1) HashJoin(s1 s2) Parallel(s1 4) Parallel(s2 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）消除嵌套循环对大表s1的千万级重复扫描；2）通过Rows Hint校正统计偏差，使优化器正确选择哈希连接；3）IndexOnlyScan减少回表IO；4）并行度提升加速大表扫描。整体执行计划将从原10万+总代价降至3万以内，瓶颈节点（Nested Loop）被完全消除。"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "通过校正统计偏差、优化连接顺序、强制哈希连接并提升并行度，消除嵌套循环性能瓶颈，实现查询性能最大化",
+    "core_optimization_points": [
+      "校正customer与customer_demographics连接后的中间结果集估计偏差，实际行数远小于优化器估计，需乘以修正系数0.1",
+      "调整连接顺序为：date_dim → store_sales s1 → customer → customer_address → customer_demographics → item1 → store_sales s2 → item2，使小结果集驱动大表扫描，避免中间结果膨胀",
+      "强制s1与customer之间使用HashJoin，替代低效的Nested Loop，避免因驱动表估计偏差导致内表被循环扫描上万次",
+      "强制item1与s1、item2与s2之间使用IndexOnlyScan，利用覆盖索引避免回表，减少IO开销",
+      "提升store_sales表扫描并行度至4，加速大表扫描，充分利用多核资源"
+    ],
+    "hint_combination": "/*+ Rows(customer customer_demographics *0.1) Leading( (date_dim (s1 (customer (customer_address customer_demographics))) (item1 (s2 item2))) ) HashJoin(s1 customer) IndexOnlyScan(item1 item_pkey) IndexOnlyScan(item2 item_pkey) Parallel(s1 4) Parallel(s2 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）修正客户表连接结果集估计偏差，避免嵌套循环对store_sales的千万级循环扫描；2）强制哈希连接提升大表连接效率；3）使用IndexOnlyScan消除回表开销；4）并行扫描加速大表数据读取。整体将原计划中耗时占比最高的Nested Loop与Hash Join节点转化为高效路径。"
+  }
+]

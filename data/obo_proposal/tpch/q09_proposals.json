@@ -1,0 +1,277 @@
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "校正严重行数估计偏差，优化连接顺序并强制哈希连接，消除嵌套循环中的Memoize缓存开销，显著降低中间结果膨胀与重复扫描代价",
+    "core_optimization_points": [
+      "修正part表过滤后行数估计偏差：优化器估计仅15152行，实际仅27196行，但后续连接导致中间结果膨胀严重，需通过Rows Hint校正上游结果集规模",
+      "调整连接顺序为：part → partsupp → supplier → nation → lineitem → orders，使小结果集（green part）作为驱动表，避免早期连接产生超大中间结果",
+      "强制part与partsupp、supplier与nation等关键连接使用HashJoin，替代低效的Nested Loop，避免因外层驱动表行数过大导致内层循环扫描千万次",
+      "禁用lineitem到orders的Memoize缓存，原执行计划中Memoize命中率极低（仅约2%），且内存占用高达80MB以上，成为显著性能瓶颈",
+      "提升lineitem与orders表的并行度，利用大表扫描的并行潜力，加速大结果集的获取"
+    ],
+    "hint_combination": "/*+ Rows(part *0.5) Leading( (part partsupp supplier nation lineitem orders) ) HashJoin(part partsupp) HashJoin(supplier nation) HashJoin(lineitem orders) NoMemoize(lineitem orders) Parallel(lineitem 8) Parallel(orders 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自：1）消除嵌套循环中对orders表的千万次重复扫描；2）避免Memoize缓存带来的高内存开销与低命中率；3）通过哈希连接加速大表连接；4）并行扫描加速大表数据读取，整体减少IO与CPU开销"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "修正严重行数估计偏差，调整连接顺序并强制哈希连接，消除嵌套循环导致的千万级循环扫描瓶颈",
+    "core_optimization_points": [
+      "校正part表过滤后行数估计偏差，修正优化器对绿色零件的过滤结果集规模误判",
+      "调整连接顺序为part→partsupp→supplier→nation→lineitem→orders，使小结果集驱动大表扫描，控制中间结果膨胀",
+      "强制part与partsupp使用HashJoin，替代低效的嵌套循环连接，避免对lineitem的重复扫描",
+      "强制supplier与nation使用HashJoin，提升小表连接效率",
+      "强制lineitem与orders使用HashJoin，替代原Memoize嵌套循环，消除缓存失效与高开销循环",
+      "提升lineitem和orders表并行度至8，充分利用多核资源加速大表扫描"
+    ],
+    "hint_combination": "/*+ Rows(part *0.001) Leading( (part partsupp supplier nation lineitem orders) ) HashJoin(part partsupp) HashJoin(supplier nation) HashJoin(lineitem orders) Parallel(lineitem 8) Parallel(orders 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修复part表过滤后行数估计偏差（原估计27k，实际仅约27），消除后续连接的指数级膨胀；2）将原嵌套循环的千万次循环扫描（Memoize高开销）替换为高效哈希连接；3）提升并行度，加速大表扫描，整体执行路径从‘低效嵌套循环+磁盘溢出排序’转变为‘并行哈希连接+内存聚合’"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "修正统计信息严重偏差导致的错误连接顺序与方法选择，强制高效哈希连接并优化扫描路径，消除嵌套循环与Memoize缓存瓶颈",
+    "core_optimization_points": [
+      "校正part表过滤后行数估计偏差，避免优化器误判为大结果集，导致后续连接顺序错误",
+      "强制将part与partsupp的连接由嵌套循环改为哈希连接，提升大表连接效率",
+      "调整连接顺序为nation→supplier→part→partsupp→lineitem→orders，使小表nation作为驱动起点，控制中间结果膨胀",
+      "强制supplier与nation使用哈希连接，避免因小表嵌套循环引发的重复扫描开销",
+      "禁用lineitem→orders的Memoize缓存，消除其在百万级循环中频繁缓存失效与内存溢出问题",
+      "提升lineitem与partsupp的并行度，加速大表扫描与索引访问"
+    ],
+    "hint_combination": "/*+ Rows(part *0.01) Leading( (nation supplier part partsupp lineitem orders) ) HashJoin(supplier nation) HashJoin(part partsupp) HashJoin(lineitem orders) NoMemoize(lineitem orders) Parallel(part 4) Parallel(lineitem 4) Parallel(partsupp 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自：1）修正part表过滤后仅约2.7万行的真实规模（原估计47万行），避免后续连接路径误判；2）将低效嵌套循环（实际执行80万次循环）替换为高效哈希连接；3）消除Memoize缓存的高内存开销与频繁失效；4）通过并行加速大表扫描，充分利用多核资源"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "校正统计信息偏差，重构连接顺序并强制哈希连接，消除嵌套循环与Memoize缓存性能瓶颈，提升并行效率",
+    "core_optimization_points": [
+      "修正part表过滤后行数估计偏差，避免优化器误判驱动表规模；实际过滤后仅27196行，但估计值远高于实际，导致后续连接顺序错误",
+      "调整连接顺序为part→partsupp→supplier→nation→orders→lineitem，将小结果集（green零件）作为最外层驱动表，控制中间结果集膨胀",
+      "强制part与partsupp之间使用IndexScan，避免全表扫描，提升子查询过滤效率",
+      "强制supplier与nation之间使用HashJoin，替代原嵌套循环，避免因nation小表被重复扫描多次",
+      "强制lineitem与orders之间使用HashJoin，替代低效的嵌套循环+Memoize缓存，消除Memoize的高内存开销与大量缓存未命中（78万次miss）",
+      "提升lineitem与partsupp表的并行度至8，充分利用大表扫描的并行潜力，加速数据读取",
+      "通过RowsHint校正part与partsupp连接后的结果集估计，消除后续连接树的代价误判"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *0.05) Leading( (part partsupp supplier nation orders lineitem) ) IndexScan(part idx_part_brand) HashJoin(part partsupp) HashJoin(supplier nation) HashJoin(lineitem orders) Parallel(lineitem 8) Parallel(partsupp 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自：1）消除原计划中对orders的千万级嵌套循环扫描与Memoize缓存开销；2）通过正确连接顺序和哈希连接，将中间结果集控制在合理范围；3）提升大表并行度，缩短I/O瓶颈；4）校正估计偏差后，优化器能生成更优路径，避免次优计划"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "校正严重行数估计偏差，优化连接顺序并强制哈希连接，消除嵌套循环的指数级性能瓶颈",
+    "core_optimization_points": [
+      "校正part表过滤后结果集的严重低估，避免后续连接因中间结果膨胀导致性能崩溃",
+      "调整连接顺序为part→partsupp→supplier→nation→orders→lineitem，将小结果集的过滤表作为驱动表，控制中间结果集增长",
+      "强制part与partsupp之间使用嵌套循环（因part过滤后行数小且有覆盖索引），避免哈希连接开销",
+      "强制supplier与nation使用哈希连接，提升小表连接效率",
+      "强制lineitem与orders之间使用嵌套循环，但启用Memoize缓存以避免重复回表查询",
+      "提升lineitem与orders的并行度，加速大表扫描与连接"
+    ],
+    "hint_combination": "/*+ Rows(part *0.001) Leading( (part partsupp supplier nation orders lineitem) ) NestLoop(part partsupp) HashJoin(supplier nation) NestLoop(lineitem orders) Memoize(lineitem orders) Parallel(lineitem 8) Parallel(orders 8) */",
+    "expected_performance_benefit": "预计执行耗时降低70%-85%，核心收益来自修正part表过滤后仅2.7万行的严重低估（原估计1.5万行），避免lineitem与orders之间因驱动表规模误判而触发千万级嵌套循环。通过Memoize缓存避免对orders的重复索引扫描，结合高并行度加速大表处理，整体性能瓶颈从排序与嵌套循环迁移至可并行的哈希连接与扫描阶段。"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "修正严重行数估计偏差，强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈并提升并行效率",
+    "core_optimization_points": [
+      "校正`part`表在`LIKE '%green%'`过滤后的实际行数估计，解决优化器低估导致的中间结果膨胀",
+      "调整连接顺序为`part → partsupp → supplier → nation → lineitem → orders`，以小结果集驱动大表扫描，避免早期中间结果过早膨胀",
+      "强制`part`与`partsupp`使用哈希连接，替代低效嵌套循环，提升大表连接效率",
+      "强制`lineitem`与`orders`使用哈希连接，避免Memoize缓存带来的高内存开销与频繁缓存未命中",
+      "提升`part`和`supplier`表的并行扫描并行度至4，加速大表扫描阶段"
+    ],
+    "hint_combination": "/*+ Rows(part *0.01) Leading( (part partsupp supplier nation lineitem orders) ) HashJoin(part partsupp) HashJoin(lineitem orders) Parallel(part 4) Parallel(supplier 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）纠正`part`表过滤后仅约2.7万行（实际）被误估为15152行，避免后续连接结果集指数级膨胀；2）将原嵌套循环连接替换为哈希连接，消除`lineitem`与`orders`之间千万级循环扫描与Memoize缓存开销；3）并行扫描加速大表初始化阶段，提升整体吞吐。"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "修正严重行数估计偏差，优化连接顺序并强制哈希连接，消除嵌套循环的高代价重复扫描，提升并行度以加速大表处理",
+    "core_optimization_points": [
+      "校正`part`表过滤后结果集估计偏差，原估计仅15152行，实际因`p_name LIKE '%green%'`筛选出27196行，但优化器未充分考虑该条件选择性，导致后续连接路径误判",
+      "调整连接顺序为`part`→`partsupp`→`supplier`→`nation`→`lineitem`→`orders`，将小结果集（过滤后`part`）作为驱动表，避免早期连接产生大中间结果",
+      "强制`part`与`partsupp`之间使用`HashJoin`，替代原`Nested Loop`，避免因`partsupp`无索引扫描导致的高代价循环扫描",
+      "强制`supplier`与`nation`之间使用`HashJoin`，替代原`HashJoin`但因`nation`表极小（25行）而效率不高，实际应优先合并小表，但当前结构已合理，仅需确保连接顺序最优",
+      "强制`lineitem`与`orders`之间使用`NestLoop`，但禁用`Memoize`缓存，因`Memoize`在原计划中命中率极低（仅约2%），且内存消耗高达80MB以上，成为性能瓶颈",
+      "提升`lineitem`表并行度至4，加速其大表扫描，原计划仅启动3个worker，未充分利用多核资源"
+    ],
+    "hint_combination": "/*+ Rows(part *1.8) Leading( (part partsupp supplier nation lineitem orders) ) HashJoin(part partsupp) HashJoin(supplier nation) NoMemoize(lineitem orders) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自：1）修正`part`表过滤后行数估计偏差，避免后续连接路径误判；2）强制`part`与`partsupp`使用哈希连接，消除嵌套循环对`partsupp`的万级次扫描；3）禁用`Memoize`缓存，释放大量内存并消除其高开销；4）提升`lineitem`并行度，加速大表扫描。整体计划将从8.9秒降至2.5秒以内。"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "修正严重行数估计偏差，强制以小表nation为驱动起点，优化连接顺序并替换低效嵌套循环，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正part表过滤后行数估计偏差，因p_name LIKE '%green%'选择性极低但优化器高估结果集，实际仅27196行/4次循环，需乘以修正系数0.015",
+      "调整连接顺序为nation→supplier→partsupp→part→lineitem→orders，将最小结果集nation作为驱动表，避免早期连接膨胀中间结果",
+      "强制nation与supplier使用HashJoin，替代原嵌套循环，提升连接效率；同时禁止lineitem与orders之间使用Memoize缓存，消除其高开销的缓存机制",
+      "提升lineitem与orders表扫描的并行度至8，充分利用大表扫描的并行潜力，减少单线程瓶颈",
+      "强制lineitem使用IndexScan配合idx_lineitem_partkey索引，避免全表扫描；并确保part使用IndexScan而非SeqScan"
+    ],
+    "hint_combination": "/*+ Rows(part *0.015) Leading( (nation supplier partsupp part lineitem orders) ) HashJoin(nation supplier) NoMemoize(lineitem orders) Parallel(lineitem 8) Parallel(orders 8) IndexScan(lineitem idx_lineitem_partkey) IndexScan(part part_pkey) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自：1）修正part表过滤后行数估计偏差，避免后续连接产生超大中间结果；2）通过优化连接顺序与强制HashJoin，消除原计划中对orders表的千万次Memoize重复查询；3）提升并行度与索引扫描，加速大表扫描与连接过程，整体执行路径从嵌套循环+Memoize+全表扫描转变为高效索引驱动+并行哈希连接"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "修正统计信息严重偏差导致的连接顺序与方法误判，强制最优连接路径并提升并行度，消除嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正part表过滤后结果集的行数估计偏差，避免优化器误判驱动表规模",
+      "调整连接顺序为nation→supplier→partsupp→part→lineitem→orders，以小表nation为驱动起点，控制中间结果集膨胀",
+      "强制nation与supplier使用HashJoin，避免因小表连接被错误嵌套循环化",
+      "强制part与partsupp使用NestLoop，利用partsupp主键索引高效回表，避免哈希连接开销",
+      "强制lineitem与orders使用HashJoin，替代原低效的嵌套循环+Memoize缓存模式",
+      "提升lineitem与orders表的并行度至4，充分利用大表扫描的并行潜力",
+      "禁用Memoize缓存，消除其带来的内存开销与缓存命中率低下的性能损耗"
+    ],
+    "hint_combination": "/*+ Rows(part *0.001) Leading( (nation supplier partsupp part lineitem orders) ) HashJoin(nation supplier) NestLoop(part partsupp) HashJoin(lineitem orders) Parallel(lineitem 4) Parallel(orders 4) NoMemoize(lineitem orders) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正part表因LIKE '%green%'导致的严重行数低估（实际过滤后仅约2.7万行，优化器估计超15万），避免驱动表误判；2）将原低效的嵌套循环+Memoize模式（实际耗时7893ms）替换为高效HashJoin；3）提升大表扫描并行度，释放多核并行能力；4）消除Memoize缓存的内存与维护开销，避免78万次Miss导致的性能浪费。整体执行路径从‘错误驱动+低效连接’转变为‘精准驱动+高吞吐连接’。"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "修正严重行数估计偏差，优化连接顺序并强制哈希连接，消除嵌套循环导致的千万级循环扫描瓶颈",
+    "core_optimization_points": [
+      "校正`part`表过滤后行数估计偏差，实际仅27196行（4次扫描），远低于优化器估计值，需修正连接中间结果集规模",
+      "调整连接顺序为`part`→`partsupp`→`supplier`→`nation`→`lineitem`→`orders`，将小结果集驱动表前置，控制中间结果膨胀",
+      "强制`part`与`partsupp`使用嵌套循环（因`partsupp`有唯一索引，且`part`过滤后行数少），避免哈希连接开销",
+      "强制`supplier`与`nation`使用哈希连接，提升连接效率；禁止`lineitem`与`orders`使用嵌套循环（原计划中Memoize缓存命中率极低，且循环次数高达326万次）",
+      "提升`part`、`supplier`、`lineitem`表并行度至4，加速大表扫描；禁用`nation`表并行（仅25行，无意义）",
+      "启用`Memoize`缓存控制，对`lineitem`→`orders`连接启用缓存，减少重复查询开销"
+    ],
+    "hint_combination": "/*+ Rows(part *0.01) Leading( (part (partsupp (supplier nation)) (lineitem orders)) ) NestLoop(part partsupp) HashJoin(supplier nation) NoNestLoop(lineitem orders) Memoize(lineitem orders) Parallel(part 4) Parallel(supplier 4) Parallel(lineitem 4) Parallel(orders 0) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正`part`表过滤后行数估计偏差（原估计值过高），避免后续连接结果集膨胀；2）将`lineitem`与`orders`连接从嵌套循环改为哈希连接，消除326万次重复查询；3）通过并行加速大表扫描，提升整体吞吐；4）启用Memoize缓存，复用`orders`查询结果，减少回表开销"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "校正严重行数估计偏差，重构连接顺序并强制哈希连接，消除嵌套循环的指数级性能瓶颈，提升并行效率",
+    "core_optimization_points": [
+      "校正`part`表过滤后行数估计偏差，原估计仅15152行，实际仅27196行（过滤后），但优化器低估了`part`与`partsupp`连接后结果集规模，需通过Rows Hint修正中间结果集规模",
+      "调整连接顺序为`part`→`partsupp`→`supplier`→`nation`→`lineitem`→`orders`，将小结果集的`part`表作为驱动表，避免早期连接产生超大中间结果",
+      "强制`part`与`partsupp`之间使用哈希连接，替代低效的嵌套循环（原计划中`part`→`partsupp`为嵌套循环，导致内层`partsupp`被扫描超过10万次）",
+      "强制`supplier`与`nation`之间使用哈希连接，提升连接效率，避免因`supplier`与`nation`连接后结果集膨胀导致后续连接代价激增",
+      "禁用`lineitem`与`orders`之间的Memoize缓存，原计划中Memoize命中率极低（仅约2%），且内存消耗高达80MB以上，应直接禁用以释放内存并提升执行效率",
+      "提升`lineitem`表并行度至8，充分利用其5999万行的大表特性，加速扫描与连接过程"
+    ],
+    "hint_combination": "/*+ Rows(part *0.2) Leading( (part partsupp supplier nation lineitem orders) ) HashJoin(part partsupp) HashJoin(supplier nation) NoMemoize(lineitem orders) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除`part`→`partsupp`嵌套循环的千万级循环扫描；2）修复`part`过滤后行数估计偏差，使连接顺序与方法选择更合理；3）禁用低效Memoize缓存，减少内存开销；4）提升`lineitem`并行度，加速大表扫描与连接。整体执行路径将从‘嵌套循环+内存溢出排序’转向‘哈希连接+并行扫描’的高效路径。"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "校正严重行数估计偏差，重构连接顺序并强制哈希连接，消除嵌套循环的指数级性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正part表过滤后结果集的行数估计偏差，原估计值严重低估实际匹配行数，导致后续连接路径错误",
+      "调整连接顺序为part→partsupp→supplier→nation→lineitem→orders，将小结果集的part作为驱动表，避免早期连接膨胀",
+      "强制part与partsupp之间使用IndexScan，利用ps_partkey索引避免全表扫描，提升过滤效率",
+      "强制lineitem与orders之间使用HashJoin，替代低效的嵌套循环+Memoize缓存，消除千万次重复查询开销",
+      "提升lineitem和orders表的并行度至4，充分利用多核资源加速大表扫描",
+      "禁用Memoize缓存，因实际执行中缓存命中率极低（<3%），且内存开销巨大，反而成为性能负担"
+    ],
+    "hint_combination": "/*+ Rows(part *10) Leading( (part partsupp supplier nation lineitem orders) ) IndexScan(part idx_part_brand) HashJoin(partsupp ps_suppkey) HashJoin(lineitem orders) Parallel(lineitem 4) Parallel(orders 4) NoMemoize(lineitem orders) */",
+    "expected_performance_benefit": "预计执行耗时降低75%-85%，核心收益来自：1）纠正part表过滤后行数估计偏差（原估计仅27k，实际约27万），避免错误连接顺序；2）强制哈希连接替代嵌套循环+Memoize，消除300万次以上重复的orders表查询；3）提升并行度并禁用无效缓存，释放内存压力，显著提升整体吞吐"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "修正严重行数估计偏差，优化连接顺序并强制哈希连接，消除嵌套循环对大表的指数级扫描开销",
+    "core_optimization_points": [
+      "校正part表过滤后行数估计偏差，优化器低估了'p_name LIKE %green%'的匹配结果，实际行数远高于估计值",
+      "调整连接顺序为part→partsupp→supplier→nation→lineitem→orders，将小结果集过滤后的part作为驱动表，避免早期连接膨胀",
+      "强制part与partsupp之间使用IndexScan，利用ps_partkey索引避免全表扫描，提升连接效率",
+      "强制lineitem与orders之间使用HashJoin，替代原嵌套循环+Memoize的低效模式，消除千万级Memoize缓存开销",
+      "提升lineitem与partsupp扫描的并行度至4，加速大表扫描阶段"
+    ],
+    "hint_combination": "/*+ Rows(part *3.0) Leading( (part partsupp supplier nation lineitem orders) ) IndexScan(part idx_part_brand) HashJoin(part partsupp) HashJoin(lineitem orders) Parallel(lineitem 4) Parallel(partsupp 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正part表过滤后行数估计（原估计约15k，实际约47k），避免后续连接结果集被严重低估；2）强制使用哈希连接替代嵌套循环+Memoize，消除320万次Memoize Miss带来的内存与CPU开销；3）提升大表并行度，充分利用多核资源加速扫描与连接。整体执行计划将从‘嵌套循环+大量缓存’转向‘高效哈希连接+并行扫描’，显著降低IO与CPU消耗。"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "修正严重行数估计偏差，强制最优连接顺序与哈希连接，消除嵌套循环的指数级性能瓶颈，提升并行度加速大表扫描",
+    "core_optimization_points": [
+      "校正part表过滤后行数估计偏差，原估计仅15152行，实际过滤后为27196行，但优化器对后续连接的中间结果集估计严重偏低，需通过Rows Hint修正",
+      "调整连接顺序为part→partsupp→supplier→nation→lineitem→orders，优先处理高选择性过滤表（part）并尽早构建小结果集，避免lineitem与orders的超大中间结果膨胀",
+      "强制part与partsupp使用IndexScan，避免全表扫描；同时强制supplier与nation使用HashJoin，避免嵌套循环导致的多层嵌套开销",
+      "强制lineitem与orders之间使用HashJoin，替代原低效的嵌套循环+Memoize缓存机制，消除Memoize的高内存消耗与缓存命中率低的问题",
+      "提升lineitem与orders表的并行扫描能力，分别设置并行worker数量为4和4，充分利用并行执行能力加速大表扫描"
+    ],
+    "hint_combination": "/*+ Rows(part *1.8) Leading( (part partsupp supplier nation lineitem orders) ) IndexScan(part idx_part_brand) IndexScan(partsupp partsupp_pkey) HashJoin(part partsupp) HashJoin(supplier nation) HashJoin(lineitem orders) Parallel(lineitem 4) Parallel(orders 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正part表过滤后行数估计偏差，避免后续连接路径误判；2）将原嵌套循环+Memoize的低效结构替换为哈希连接，消除千万次循环与高内存缓存开销；3）提升lineitem与orders的并行度，加速大表扫描；4）合理连接顺序控制中间结果集增长，避免早期膨胀。最终整体执行计划将从8.9秒降至2.5秒以下。"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "通过校正过滤后结果集行数估计、强制哈希连接替代嵌套循环、优化连接顺序并提升并行度，彻底消除大表嵌套循环与Memoize缓存瓶颈",
+    "core_optimization_points": [
+      "校正`part`表在`LIKE '%green%'`过滤后的实际行数估计，避免优化器低估中间结果集规模，导致连接顺序与方法误判",
+      "将`part`表作为驱动表，优先执行`part → partsupp → supplier → nation`的连接路径，控制早期中间结果膨胀",
+      "强制`part`与`partsupp`之间使用嵌套循环连接，利用`partsupp_pkey`主键索引高效匹配，避免哈希连接开销",
+      "强制`supplier`与`nation`之间使用哈希连接，提升大表连接效率，避免嵌套循环在25,000行上逐行扫描",
+      "强制`lineitem`与`orders`之间使用哈希连接，替代原低效的嵌套循环+Memoize缓存机制，消除千万级缓存命中失败与内存溢出问题",
+      "提升`lineitem`与`orders`表的并行度至4，充分利用大表扫描的并行潜力，加速数据读取"
+    ],
+    "hint_combination": "/*+ Rows(part *0.001) Leading( (part partsupp supplier nation lineitem orders) ) NestLoop(part partsupp) HashJoin(supplier nation) HashJoin(lineitem orders) Parallel(lineitem 4) Parallel(orders 4) */",
+    "expected_performance_benefit": "预计执行耗时降低70%-85%。核心收益来自：1）修正`part`表过滤后行数估计（原估计27k，实际约27k，但优化器误估为高基数）；2）消除`lineitem`与`orders`之间嵌套循环+Memoize缓存的千万级循环开销（原实际执行时间占比超80%）；3）通过哈希连接替代嵌套循环，避免`orders`表被重复访问数百万次；4）并行扫描加速大表数据读取，整体执行时间从约9秒降至2秒以内"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "校正严重行数估计偏差，重构连接顺序并强制哈希连接，消除嵌套循环与Memoize缓存开销，显著降低执行耗时",
+    "core_optimization_points": [
+      "修正part表过滤后行数估计偏差，原估计值远低于实际值，导致后续连接路径错误",
+      "调整连接顺序为part→partsupp→supplier→nation→lineitem→orders，将小结果集过滤后的part作为驱动表，避免早期中间结果膨胀",
+      "强制part与partsupp之间使用IndexScan，避免全表扫描与无效连接",
+      "强制lineitem与orders之间使用HashJoin，替代低效的Nested Loop + Memoize缓存，消除千万级循环扫描开销",
+      "禁用Memoize缓存，避免在大表连接中引入不必要的内存开销与缓存命中率问题",
+      "提升lineitem与orders扫描的并行度，加速大表数据读取"
+    ],
+    "hint_combination": "/*+ Rows(part *10.0) Leading( (part partsupp supplier nation lineitem orders) ) IndexScan(part idx_part_brand) HashJoin(lineitem orders) NoMemoize(lineitem orders) Parallel(lineitem 4) Parallel(orders 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正part表过滤后行数估计（实际约27k，原估计仅约2.7k），避免优化器误判驱动表规模；2）强制哈希连接替代嵌套循环，消除326万次Memoize缓存查找开销；3）提升大表并行度，加速数据读取；4）禁用无效缓存机制，减少内存与CPU开销。整体计划将从8.9秒降至约2.5秒以内。"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "修正严重行数估计偏差，强制优化连接顺序与连接方法，消除嵌套循环的高成本重复扫描，提升并行效率",
+    "core_optimization_points": [
+      "校正part表过滤后行数估计偏差，原估计值严重低估，实际仅27196行但优化器估计为15152，导致后续连接路径错误",
+      "调整连接顺序为：part → partsupp → supplier → nation → lineitem → orders，将小结果集过滤后的part作为驱动表，避免早期连接膨胀",
+      "强制part与partsupp之间使用IndexScan，避免全表扫描；同时强制partsupp与supplier使用HashJoin，替代低效嵌套循环",
+      "强制lineitem与orders之间使用HashJoin，替代原Memoize嵌套循环，消除百万次缓存命中/未命中开销",
+      "提升lineitem与orders的并行度，加速大表扫描与连接过程"
+    ],
+    "hint_combination": "/*+ Rows(part *1.8) Leading( (part partsupp supplier nation lineitem orders) ) IndexScan(part idx_part_brand) HashJoin(part partsupp) HashJoin(part partsupp supplier) HashJoin(lineitem orders) Parallel(lineitem 8) Parallel(orders 8) */",
+    "expected_performance_benefit": "预计执行耗时降低75%-85%，核心收益来自：1）纠正part表过滤后行数估计偏差，避免错误连接顺序；2）将原嵌套循环的千万级循环（Memoize耗时占80%以上）替换为高效哈希连接；3）提升大表并行度，充分释放CPU资源；4）消除不必要的索引扫描与回表开销"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "修正统计信息偏差导致的行数误估，强制最优连接顺序与哈希连接，消除嵌套循环的性能瓶颈，提升并行效率",
+    "core_optimization_points": [
+      "校正`part`表过滤后行数估计偏差，因`p_name LIKE '%green%'`选择性极低但优化器估计过高，实际仅约27k行，而估计值远高于此，需通过Rows Hint修正",
+      "调整连接顺序为`part`→`partsupp`→`supplier`→`nation`→`lineitem`→`orders`，将小结果集的`part`作为驱动表，避免早期连接膨胀中间结果集",
+      "强制`part`与`partsupp`使用嵌套循环（因`partsupp`有主键索引且连接键为`ps_partkey`，可高效回表），但禁止其与`supplier`使用嵌套循环，改用哈希连接提升大表连接效率",
+      "强制`supplier`与`nation`使用哈希连接，避免因`nation`表小但被嵌套循环驱动导致性能下降",
+      "强制`lineitem`与`orders`使用哈希连接，替代原嵌套循环+Memoize缓存的低效结构，避免Memoize频繁缓存未命中（实际Misses达78万次）",
+      "提升`lineitem`与`orders`表的并行度，利用大表扫描优势加速数据读取"
+    ],
+    "hint_combination": "/*+ Rows(part *0.05) Leading( (part (partsupp (supplier nation)) (lineitem orders)) ) NoNestLoop(part partsupp) HashJoin(partial supplier nation) HashJoin(lineitem orders) Parallel(lineitem 8) Parallel(orders 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正`part`表过滤后行数估计偏差，避免后续连接误判；2）消除`lineitem`与`orders`间嵌套循环+Memoize的高开销结构，将千万级循环扫描转为高效哈希连接；3）提升大表并行度，充分利用多核资源加速IO密集型扫描。原计划中`Memoize`的78万次Misses将被彻底避免，显著减少内存与CPU消耗。"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "通过校正关键表行数估计偏差、强制最优连接顺序与哈希连接、禁用低效Memoize缓存，彻底消除嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正`part`表因`LIKE '%green%'`过滤后实际行数远低于估计值的问题，使用`Rows` Hint修正中间结果集规模",
+      "强制将`nation`与`supplier`作为驱动起点，通过`Leading`控制连接顺序，避免早期连接产生超大中间结果",
+      "强制`part`与`partsupp`之间使用`HashJoin`，替代低效的`Nested Loop`，提升大表连接性能",
+      "禁用`lineitem`与`orders`之间的`Memoize`缓存，消除其在高基数连接中带来的内存开销与缓存失效问题",
+      "提升`part`表并行度至8，加速大表扫描与过滤"
+    ],
+    "hint_combination": "/*+ Rows(part *0.001) Leading( (nation supplier (part partsupp) lineitem orders) ) HashJoin(part partsupp) NoMemoize(lineitem orders) Parallel(part 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正`part`表过滤后仅约2.7万行的严重估计偏差（原估计15152行，实际约27196行，但优化器误判为更高），避免后续连接膨胀；2）强制`part`与`partsupp`使用哈希连接，替代嵌套循环中每行扫描`partsupp`的高代价操作；3）禁用`Memoize`缓存，消除其在300万次循环中频繁Miss导致的80MB+内存开销；4）提升`part`表并行度，加速过滤阶段的顺序扫描。整体执行路径从左深嵌套循环转向高效哈希连接+并行扫描，显著降低IO与CPU开销。"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "修正统计信息偏差导致的严重行数低估，强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈并提升并行效率",
+    "core_optimization_points": [
+      "校正part表过滤后行数估计偏差，实际返回约27,196行，远高于优化器估计值，强制修正中间结果集规模",
+      "调整连接顺序为part → partsupp → supplier → nation → lineitem → orders，将小结果集（green零件）作为驱动表，避免早期中间结果膨胀",
+      "强制part与partsupp之间使用HashJoin，替代低效的Nested Loop，避免因索引扫描导致的重复回表开销",
+      "强制supplier与nation之间使用HashJoin，避免因小表顺序扫描导致的连接延迟",
+      "强制lineitem与orders之间使用HashJoin，替代原嵌套循环中导致的Memoize缓存失效与高开销回表",
+      "提升lineitem与orders表的并行扫描能力，加速大表数据读取"
+    ],
+    "hint_combination": "/*+ Rows(part *0.1) Leading( (part partsupp supplier nation lineitem orders) ) HashJoin(part partsupp) HashJoin(supplier nation) HashJoin(lineitem orders) Parallel(lineitem 8) Parallel(orders 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自：1）纠正part表过滤后行数严重低估（原估计约15k，实际27k，但优化器误判为极小），避免后续连接被错误地推入嵌套循环；2）将原本在lineitem与orders间执行的高开销嵌套循环（实际执行326万次Memoize查找）替换为高效哈希连接；3）通过并行扫描加速5900万行lineitem与1500万行orders的大表读取，显著缩短IO瓶颈时间"
+  }
+]

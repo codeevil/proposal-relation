@@ -1,0 +1,251 @@
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "通过校正部分表的行数估计偏差，强制以过滤后结果集更小的表为驱动表，采用哈希连接替代嵌套循环，显著降低中间结果膨胀与循环扫描开销",
+    "core_optimization_points": [
+      "校正part表在OR条件下的行数估计偏差，实际仅约951行，但优化器估计为1174行，修正为真实规模以避免后续连接路径误判",
+      "强制将part作为驱动表，先完成多品牌、多容器、多尺寸的过滤，再与lineitem连接，避免lineitem被重复扫描超过4700次",
+      "强制part与lineitem之间使用哈希连接，替代原低效的嵌套循环连接，消除对lineitem索引的千次级重复扫描",
+      "提升lineitem表并行度至4，充分利用其大表特性，加速索引扫描与过滤过程"
+    ],
+    "hint_combination": "/*+ Rows(part *0.81) Leading( (part lineitem) ) HashJoin(part lineitem) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自消除原计划中lineitem表被重复扫描4754次的嵌套循环瓶颈，同时通过哈希连接将连接代价从O(n×m)降至O(n+m)，并行加速大表扫描，整体执行时间从459ms降至150ms以内"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "通过校正过滤后结果集行数估计偏差，强制以小结果集的part表为驱动表并采用哈希连接，消除嵌套循环的指数级开销，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正part表在多品牌过滤后的实际行数估计偏差，优化器低估了满足条件的行数，导致连接顺序错误",
+      "强制以part表为驱动表，利用其过滤后仅约1000行的极小结果集作为外层驱动，避免lineitem表被重复扫描数万次",
+      "强制part与lineitem之间使用哈希连接，替代低效的嵌套循环连接，消除因lineitem内表扫描次数过多带来的性能瓶颈",
+      "提升lineitem表的并行扫描并行度至8，充分利用大表扫描的并行潜力，加速数据读取阶段"
+    ],
+    "hint_combination": "/*+ Rows(part *0.1) Leading( (part lineitem) ) HashJoin(part lineitem) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时从459ms降至120ms以内，降幅超过70%。核心收益来自消除原计划中lineitem表被循环扫描4754次的指数级开销（实际内层循环次数为4754次，但优化后仅需1次哈希构建），同时通过并行扫描加速大表数据读取，整体性能跃升至最优水平"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "修正Part表过滤后行数严重低估问题，强制以Part为驱动表并行扫描，使用哈希连接提升大表Join效率，消除嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正Part表在OR条件下的行数估计偏差，实际仅需扫描约1000行，但优化器估计为1174行，且过滤后仅剩951行，估计误差约10倍，使用Rows Hint强制修正为实际规模",
+      "调整连接顺序为Part → Lineitem，将高选择性过滤后的小结果集Part作为驱动表，避免Lineitem被重复扫描数万次",
+      "强制Part与Lineitem之间使用HashJoin，替代低效的嵌套循环连接，避免因Lineitem内表扫描次数高达4754次导致的指数级耗时",
+      "提升Part表并行度至8，充分利用其数据规模（199万行）与索引结构，加速位图扫描与过滤过程"
+    ],
+    "hint_combination": "/*+ Rows(part *0.1) Leading( (part lineitem) ) HashJoin(part lineitem) Parallel(part 8) */",
+    "expected_performance_benefit": "预计执行耗时从459ms降至120ms以内，降幅超过70%。核心收益来自消除嵌套循环对Lineitem的4754次重复扫描，同时通过哈希连接和并行扫描显著加速大表过滤与Join过程，解决优化器因统计信息失准导致的路径错误"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "校正部分表行数估计偏差，强制将高选择性过滤的part表作为驱动表，使用哈希连接替代嵌套循环，提升并行扫描效率，解决原计划中因估计偏差导致的嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "基于统计信息与实际执行结果，校正part表在OR条件下的行数估计偏差，使用Rows Hint修正优化器对过滤后结果集的严重低估",
+      "强制将part表作为连接驱动表，避免原计划中先扫描lineitem再连接的低效路径，控制中间结果集规模",
+      "强制使用哈希连接替代嵌套循环连接，避免因lineitem内表扫描次数过多（实际4754次）导致的指数级性能下降",
+      "提升lineitem表并行扫描并行度至4，充分利用多核资源加速大表扫描，弥补原计划中并行度不足的问题"
+    ],
+    "hint_combination": "/*+ Rows(part *0.005) Leading( (part lineitem) ) HashJoin(part lineitem) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正part表行数估计偏差（原估计1174行，实际仅951行，但优化器误判为大表）；2）避免嵌套循环中lineitem被扫描近5000次的灾难性开销；3）通过哈希连接将连接代价从O(n×m)降至O(n+m)，并行扫描加速大表扫描，整体性能由459ms降至150ms以下"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "通过校正部分表行数估计偏差，强制以part为驱动表并采用哈希连接，避免嵌套循环对lineitem的无效扫描，显著降低中间结果膨胀与IO开销",
+    "core_optimization_points": [
+      "校正part表在OR条件下的行数估计偏差，优化器低估其实际匹配行数，导致后续连接路径错误",
+      "强制以part表为驱动表，先通过位图扫描精准过滤出符合条件的part行，再与lineitem连接，避免大表lineitem被重复扫描",
+      "强制part与lineitem之间使用哈希连接，替代原嵌套循环连接，避免因lineitem内表扫描次数过多导致性能指数级下降",
+      "提升lineitem表并行度至8，充分利用其大表特性，加速索引扫描与回表过程"
+    ],
+    "hint_combination": "/*+ Rows(part *0.3) Leading( (part lineitem) ) HashJoin(part lineitem) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正part表过滤后行数估计偏差（实际约951×5=4755行，原估计仅1174），避免优化器误判驱动表；2）将低效嵌套循环（实际扫描4754次）替换为一次哈希连接，消除重复扫描开销；3）提升lineitem并行度，加速大表索引扫描与回表，整体减少IO与CPU耗时"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "校正Part表过滤后行数估计偏差，强制以Part为驱动表并使用位图扫描，避免嵌套循环对Lineitem的无效扫描，提升连接效率",
+    "core_optimization_points": [
+      "校正Part表在OR条件下的行数估计偏差，优化器低估实际匹配行数，导致连接顺序错误",
+      "强制使用BitmapScan扫描Part表，利用多索引位图合并提升过滤效率，避免全表扫描与重复回表",
+      "调整连接顺序为Part→Lineitem，将小结果集Part作为驱动表，控制中间结果集规模",
+      "强制Lineitem使用IndexScan配合idx_lineitem_partkey索引，避免嵌套循环中对大表的逐行探测",
+      "提升Part表并行度至4，加速位图构建与扫描过程"
+    ],
+    "hint_combination": "/*+ Rows(part *0.5) Leading( (part lineitem) ) BitmapScan(part) IndexScan(lineitem idx_lineitem_partkey) Parallel(part 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自纠正优化器对Part表实际匹配行数（约950行/循环）的严重低估（仅估计1174行/5次循环，实际应为约4750行），避免了原计划中对Lineitem进行4754次无效索引扫描；通过位图扫描与并行处理，大幅减少IO与CPU开销，同时将嵌套循环替换为高效驱动表连接"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "校正部分表行数估计偏差，强制以小结果集的part表为驱动表，使用哈希连接避免嵌套循环性能瓶颈，提升并行度并优化扫描路径",
+    "core_optimization_points": [
+      "校正part表在OR条件下的行数估计偏差，优化器低估了满足条件的行数，实际为约10万级，需乘以修正系数0.5以匹配真实规模",
+      "强制将part表作为驱动表，通过Leading控制连接顺序，避免lineitem作为驱动表导致的嵌套循环无限循环扫描",
+      "强制part与lineitem之间使用HashJoin，替代原低效的Nested Loop，消除因lineitem内表扫描次数高达4754次导致的性能瓶颈",
+      "提升lineitem表并行扫描并行度至8，充分利用大表扫描的并行潜力，加速数据读取",
+      "强制使用IndexScan on idx_lineitem_partkey，避免因索引未被选中导致的次优路径"
+    ],
+    "hint_combination": "/*+ Rows(part *0.5) Leading( (part lineitem) ) HashJoin(part lineitem) Parallel(lineitem 8) IndexScan(lineitem idx_lineitem_partkey) */",
+    "expected_performance_benefit": "预计执行耗时从459ms降至150ms以内，降幅达67%以上。核心收益来自：1）消除嵌套循环中lineitem被扫描4754次的指数级开销；2）通过哈希连接将大表连接代价从O(n*m)优化为O(n+m)；3）并行扫描加速大表数据读取；4）修正估计偏差后优化器能正确选择最优路径"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "修正Part表过滤后行数严重低估问题，强制使用位图扫描与哈希连接，避免嵌套循环对LineItem的无效扫描，显著降低中间结果膨胀与IO开销",
+    "core_optimization_points": [
+      "识别并修正Part表在OR条件下的行数估计偏差：优化器估计仅1174行，实际经Filter后为951×5=4755行，偏差达4倍以上，通过Rows Hint校正估计值",
+      "强制Part表使用BitmapScan以高效处理多品牌+容器+尺寸的复合过滤条件，避免全表扫描或低效IndexScan",
+      "将连接顺序调整为先处理Part表并生成小结果集，再与LineItem连接，避免原计划中LineItem被嵌套循环扫描4754次",
+      "强制LineItem与Part之间使用HashJoin，替代低效的Nested Loop，尤其在大表连接场景下可大幅降低总代价",
+      "提升LineItem表并行度至4，充分利用其大表特性，加速索引扫描与连接过程"
+    ],
+    "hint_combination": "/*+ Rows(part *4.0) BitmapScan(part) HashJoin(part lineitem) Leading( (part lineitem) ) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）修正Part表行数估计偏差，使优化器正确选择位图扫描与哈希连接；2）消除原计划中对LineItem的4754次嵌套循环扫描（实际为0行匹配）；3）通过并行扫描加速大表读取，整体IO与CPU开销显著下降"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "修正part表过滤后行数严重低估问题，强制先过滤再连接，使用哈希连接替代嵌套循环，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正part表过滤后行数估计偏差：优化器预估仅1174行，实际为951×5=4755行，偏差达4倍以上，使用Rows Hint修正中间结果集规模",
+      "强制将part作为驱动表，通过Leading控制连接顺序，避免lineitem作为外层表导致内表被重复扫描数万次",
+      "强制使用HashJoin替代嵌套循环连接，消除因lineitem内表索引扫描次数过多（4754次）带来的性能瓶颈",
+      "提升lineitem表并行度至4，充分利用其大表特性，加速索引扫描与回表过程"
+    ],
+    "hint_combination": "/*+ Rows(part lineitem *0.4) Leading( (part lineitem) ) HashJoin(part lineitem) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）纠正part表过滤后行数低估，避免嵌套循环被错误引导；2）强制哈希连接消除对lineitem的数万次索引扫描；3）并行加速大表扫描，提升I/O吞吐效率。原计划中Nested Loop执行时间占总耗时90%以上，优化后将大幅压缩该部分开销。"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "通过校正部分表行数估计偏差、强制以小结果集part为驱动表并采用哈希连接，消除嵌套循环导致的重复扫描开销，显著降低执行耗时",
+    "core_optimization_points": [
+      "校正part表在OR条件下的行数估计偏差，优化器低估了多品牌过滤后的真实结果集规模，实际行数远高于估计值",
+      "调整连接顺序为part → lineitem，将过滤后行数极小的part作为驱动表，避免lineitem被重复扫描数万次",
+      "强制part与lineitem之间使用HashJoin，替代原低效的嵌套循环连接，避免内表lineitem因多次回表导致的高随机IO",
+      "提升lineitem表并行度至4，充分利用其大表特性加速扫描过程，提升整体并行吞吐能力"
+    ],
+    "hint_combination": "/*+ Rows(part *0.5) Leading( (part lineitem) ) HashJoin(part lineitem) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自消除原计划中lineitem表被嵌套循环扫描4754次的严重性能瓶颈，通过哈希连接将连接代价从O(n×m)降至O(n+m)，并行扫描加速大表读取，同时修正估计偏差使优化器正确选择最优路径"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "修正Part表过滤后行数严重低估问题，强制先扫描Part并使用位图扫描，再以哈希连接替代嵌套循环，显著降低中间结果膨胀与IO开销",
+    "core_optimization_points": [
+      "校正Part表过滤后实际行数与优化器估计值偏差（实际951行 vs 估计1174行），通过Rows Hint修正中间结果集规模，避免后续连接路径误判",
+      "强制使用BitmapScan扫描Part表，利用多条件OR过滤的位图合并优势，减少随机IO与重复扫描开销",
+      "将原嵌套循环连接（NestLoop）替换为HashJoin，避免对LineItem表进行数万次单行探测，解决执行时间主要瓶颈",
+      "通过Leading提示控制连接顺序为Part→LineItem，确保小结果集驱动大表，防止中间结果过早膨胀",
+      "提升LineItem表并行度至4，充分利用大表扫描的并行潜力，加速索引扫描与回表过程"
+    ],
+    "hint_combination": "/*+ Rows(part lineitem *0.8) BitmapScan(part) HashJoin(part lineitem) Leading( (part lineitem) ) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%，核心收益来自消除嵌套循环中对LineItem表的4754次重复索引扫描（原实际循环4754次），并通过哈希连接将连接代价从O(n×m)降至O(n+m)。同时，BitmapScan减少对Part表的随机回表开销，结合并行扫描提升整体吞吐能力。"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "修正部分表行数估计偏差，强制将小结果集的part表作为驱动表，使用哈希连接提升连接效率，避免嵌套循环对lineitem的无效扫描",
+    "core_optimization_points": [
+      "校正part表在OR条件下的行数估计偏差，实际仅过滤出约1000行，但优化器估计为1174行，偏差较小，但需通过Rows Hint强化估计精度",
+      "调整连接顺序为part→lineitem，使过滤后结果集小的part表作为驱动表，避免lineitem被多次扫描",
+      "强制part与lineitem之间使用HashJoin，替代原低效的Nested Loop，避免因lineitem表大且无索引匹配而循环扫描",
+      "禁用lineitem表的IndexScan，防止优化器因索引选择不当导致回表开销过大，强制使用BitmapScan以优化多条件过滤",
+      "提升part表并行度至4，充分利用其较小结果集并行处理优势"
+    ],
+    "hint_combination": "/*+ Rows(part *0.1) Leading( (part lineitem) ) HashJoin(part lineitem) NoIndexScan(lineitem) BitmapScan(lineitem) Parallel(part 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自消除嵌套循环中对lineitem的4754次无效扫描（实际仅0行命中），改用哈希连接后中间结果集规模可控；同时通过BitmapScan减少随机IO，提升过滤效率；并行处理part表的小结果集进一步压缩启动延迟。"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "修正part表过滤后行数估计偏差，强制以part为驱动表并采用位图扫描，避免嵌套循环对lineitem的无效遍历，显著降低中间结果膨胀与IO开销",
+    "core_optimization_points": [
+      "校正part表在OR条件下的行数估计偏差，优化器低估实际匹配行数，导致后续连接路径错误",
+      "强制使用BitmapScan扫描part表，利用多索引条件组合优势，减少重复回表与随机IO",
+      "调整连接顺序为part → lineitem，将小结果集part作为驱动表，避免lineitem被多次扫描",
+      "强制使用HashJoin连接part与lineitem，替代低效嵌套循环，尤其适用于大表等值连接场景",
+      "提升lineitem表并行度至8，充分利用大表扫描的并行潜力，缩短I/O瓶颈"
+    ],
+    "hint_combination": "/*+ Rows(part *0.05) BitmapScan(part) Leading( (part lineitem) ) HashJoin(part lineitem) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正part表实际匹配行数（约9500行）远高于估计值（1174行）的偏差，避免优化器误判为大表；2）强制位图扫描有效处理多brand+container+size组合过滤；3）哈希连接替代嵌套循环，消除lineitem被扫描4754次的灾难性循环；4）并行扫描加速大表读取，整体I/O与CPU开销显著下降"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "修正part表过滤后行数严重低估问题，强制使用位图扫描与哈希连接，避免嵌套循环对lineitem的无效扫描，显著降低中间结果膨胀与IO开销",
+    "core_optimization_points": [
+      "校正part表在OR条件下的行数估计偏差，优化器低估实际匹配行数，导致后续连接路径错误",
+      "强制part表使用BitmapScan，利用多索引位图合并能力高效处理品牌与容器组合过滤",
+      "强制lineitem表使用IndexScan，避免全表扫描，提升连接键匹配效率",
+      "强制part与lineitem之间使用HashJoin，替代低效的嵌套循环连接，避免对lineitem的数万次循环扫描",
+      "提升part表并行度至8，充分利用其较小结果集的并行处理潜力"
+    ],
+    "hint_combination": "/*+ Rows(part *10.0) Leading( (part lineitem) ) BitmapScan(part) IndexScan(lineitem idx_lineitem_partkey) HashJoin(part lineitem) Parallel(part 8) */",
+    "expected_performance_benefit": "预计执行耗时从459ms降至120ms以内，降幅超过70%。核心收益来自消除嵌套循环对lineitem的4754次无效扫描（实际仅需1次哈希连接），并行处理小表part的过滤结果，同时位图扫描精准命中多条件组合数据，避免全表扫描与回表开销。"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "校正部分表行数估计偏差，强制将小结果集的part表作为驱动表，使用哈希连接替代嵌套循环，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正part表过滤后结果集的行数估计偏差，优化器低估了满足品牌和容器条件的行数，实际行数远高于估计值",
+      "强制以part表为驱动表，通过Leading控制连接顺序，避免lineitem作为外层驱动表导致嵌套循环执行次数爆炸",
+      "强制part与lineitem之间使用HashJoin，替代原计划中低效的嵌套循环连接，消除内表重复扫描的开销",
+      "提升lineitem表扫描并行度至4，充分利用多核资源加速大表扫描，缓解单线程瓶颈"
+    ],
+    "hint_combination": "/*+ Rows(part *1.5) Leading( (part lineitem) ) HashJoin(part lineitem) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自将原本执行约4754次的嵌套循环（实际内层循环次数）转化为一次哈希连接，消除重复索引扫描与回表开销；同时并行扫描加速大表数据读取，整体性能瓶颈从CPU密集型嵌套循环转变为IO并行读取，实现质的飞跃"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "通过校正部分表行数估计偏差、强制优化连接顺序与连接方法，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正part表在OR条件下的行数估计偏差，优化器低估了满足brand+container+size条件的行数，实际仅约951行/循环，而估计为1174行，需乘以0.81系数修正",
+      "强制将part作为驱动表，先通过位图索引扫描过滤，再与lineitem进行哈希连接，避免原计划中lineitem被嵌套循环扫描4754次的灾难性开销",
+      "强制使用HashJoin连接part与lineitem，替代低效的Nested Loop，尤其在lineitem单次索引扫描平均耗时0.238ms且需执行4754次的场景下，哈希连接可显著降低总IO与CPU开销",
+      "提升lineitem表并行度至8，充分利用其大表特性（5999万行）与并行扫描能力，加速索引扫描阶段",
+      "在part表上强制使用BitmapScan，利用多条件OR过滤的位图合并优势，减少重复回表开销"
+    ],
+    "hint_combination": "/*+ Rows(part *0.81) Leading( (part lineitem) ) HashJoin(part lineitem) BitmapScan(part) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时从459ms降至120ms以内，降幅达74%以上。核心收益来自：1）消除嵌套循环对lineitem的4754次重复扫描；2）将低效NestLoop替换为高效HashJoin；3）通过BitmapScan优化多条件OR过滤；4）提升并行度加速大表扫描。整体执行路径更符合数据规模与索引特性，彻底解决原计划的性能瓶颈"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "通过校正部分表的行数估计偏差、强制以小结果集part为驱动表并使用哈希连接，消除嵌套循环中对lineitem的过度扫描，显著降低执行耗时",
+    "core_optimization_points": [
+      "校正part表在OR条件下的行数估计偏差，优化器低估了多品牌+容器+尺寸组合后的实际行数，实际输出约951行/循环，但估计仅1174行，需修正为更准确的中间结果集规模",
+      "调整连接顺序为part→lineitem，使过滤后结果集小的part表作为驱动表，避免lineitem被重复扫描数万次",
+      "强制part与lineitem之间使用HashJoin，替代低效的Nested Loop（内表lineitem被扫描4754次，实际仅0行匹配，说明嵌套循环在无效循环）",
+      "提升lineitem表的并行度至8，充分利用其大表特性，加速索引扫描与回表过程"
+    ],
+    "hint_combination": "/*+ Rows(part *0.8) Leading( (part lineitem) ) HashJoin(part lineitem) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时从459ms降至120ms以内，降幅达70%以上。核心收益来自：1）消除对lineitem的4754次无效嵌套循环扫描；2）将随机IO密集的Index Scan转换为高效的HashJoin；3）通过并行加速大表扫描，充分利用多核资源。同时，Rows Hint校正了优化器对part表过滤后行数的轻微高估，使连接顺序与方法选择更合理。"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "通过校正部分表行数估计偏差、强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正part表在OR条件下的行数估计偏差，优化器低估了过滤后结果集规模，实际仅约1000行，但估计值为1174，需精确校正以避免错误连接顺序决策",
+      "强制将part作为驱动表，优先进行过滤与位图扫描，避免lineitem被嵌套循环扫描成千上万次",
+      "强制使用哈希连接（HashJoin）连接part与lineitem，替代低效的嵌套循环连接，显著降低大表连接开销",
+      "提升lineitem表扫描并行度至8，充分利用系统CPU资源，加速大表扫描阶段",
+      "强制使用BitmapScan扫描part表，利用多索引位图合并，提升复杂条件过滤效率"
+    ],
+    "hint_combination": "/*+ Rows(part *0.1) Leading( (part lineitem) ) HashJoin(part lineitem) BitmapScan(part) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环中对lineitem的4754次重复扫描（原实际循环5次×4754次）；2）将高随机IO的IndexScan替换为更高效的BitmapScan；3）通过哈希连接将连接代价从O(n×m)降至O(n+m)；4）提升并行度使大表扫描并行化，充分利用多核CPU。整体瓶颈从嵌套循环+高循环次数转为并行哈希连接，执行效率呈数量级提升。"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "校正部分表行数估计偏差，强制以小结果集的part表为驱动表，使用哈希连接提升连接效率，避免嵌套循环对lineitem的过度扫描",
+    "core_optimization_points": [
+      "校正part表在OR条件下的行数估计偏差，实际过滤后仅约1000行，但优化器估计为1174行，需通过Rows Hint修正以避免后续连接计划误判",
+      "调整连接顺序为part → lineitem，将过滤后结果集小的part作为驱动表，避免lineitem被重复扫描数万次",
+      "强制part与lineitem之间使用HashJoin，替代原低效的嵌套循环连接，尤其避免在lineitem上执行4754次IndexScan",
+      "提升lineitem表并行度至8，充分利用其大表特性，加速索引扫描与数据读取"
+    ],
+    "hint_combination": "/*+ Rows(part *0.1) Leading( (part lineitem) ) HashJoin(part lineitem) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自消除对lineitem的4754次嵌套循环扫描（原耗时342ms），改用一次高效的哈希连接；同时并行读取加速大表扫描，整体执行时间有望从460ms降至150ms以下"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "校正部分表行数估计偏差，强制将高选择性过滤的part表作为驱动表，改用哈希连接避免嵌套循环性能瓶颈，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正part表过滤后行数估计偏差，实际仅约1000行，但优化器估计为1174，使用乘法系数0.1修正以避免后续连接路径误判",
+      "强制以part表为驱动表，通过Leading控制连接顺序，优先执行高选择性过滤，减少中间结果集规模",
+      "强制part与lineitem之间使用HashJoin，替代原低效的Nested Loop，避免因lineitem内表扫描次数高达4754次导致的性能灾难",
+      "提升lineitem表并行度至8，充分利用其大表特性，加速索引扫描与回表过程"
+    ],
+    "hint_combination": "/*+ Rows(part *0.1) Leading( (part lineitem) ) HashJoin(part lineitem) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自消除嵌套循环中对lineitem表的近5000次重复扫描，改用哈希连接后中间结果集规模可控；同时提升并行度可显著缩短大表扫描时间，尤其在多核服务器上表现突出"
+  }
+]

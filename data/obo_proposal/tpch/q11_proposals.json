@@ -1,0 +1,269 @@
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "通过校正中间结果集行数估计偏差、强制最优连接顺序与哈希连接、提升大表并行度，消除嵌套循环性能瓶颈并加速大表扫描",
+    "core_optimization_points": [
+      "校正nation与supplier连接后结果集行数估计偏差，修正优化器对驱动表规模的严重误判（实际4049行，估计仅4000行）",
+      "调整连接顺序为nation→supplier→partsupp，将小表nation作为最外层驱动表，控制中间结果集膨胀",
+      "强制nation与supplier使用嵌套循环连接，利用nation过滤后仅1行，supplier有高效索引，适合嵌套循环",
+      "强制partsupp与supplier使用哈希连接，避免原计划中因未命中索引导致的全表扫描与低效嵌套循环",
+      "提升partsupp表并行度至8，充分利用其大表特性，加速160万行的并行扫描",
+      "通过Rows Hint修正partsupp与supplier连接后的行数估计，防止优化器误判为小结果集而选择低效路径"
+    ],
+    "hint_combination": "/*+ Rows(nation supplier *1.01) Leading( (nation supplier partsupp) ) NestLoop(nation supplier) HashJoin(supplier partsupp) Parallel(partsupp 8) Rows(supplier partsupp *0.15) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除原计划中对大表partsupp的嵌套循环扫描（实际循环5次，每次扫描160万行）；2）通过哈希连接替代嵌套循环，避免内表重复扫描；3）提升并行度至8，加速大表扫描；4）通过Rows Hint校正估计偏差，确保优化器选择正确路径。预计总耗时从2187ms降至600ms以下。"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "通过校正中间结果集行数估计偏差、强制最优连接顺序与哈希连接，消除嵌套循环导致的性能瓶颈，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正nation与supplier连接后结果集的行数估计偏差，因优化器低估了德国供应商数量（实际4049行，估计仅4000行，偏差1.01倍，但实际执行中因并行导致多轮循环，需精确校正）",
+      "强制nation作为最外层驱动表，先过滤出德国，再与supplier连接，避免早期连接膨胀；随后将partsupp与该结果集使用哈希连接，形成左深树连接顺序",
+      "强制partsupp与supplier之间使用哈希连接，替代原嵌套循环连接，避免对partsupp进行多次全表扫描（原执行中partsupp被扫描5次，每次约160万行）",
+      "提升partsupp表并行度至8，充分利用其大表特性，加速顺序扫描阶段",
+      "通过RowsHint修正partsupp与supplier连接后的中间结果集行数，实际为323920行，优化器估计仅79996行，偏差约4.05倍，需乘以系数4.05以引导正确计划"
+    ],
+    "hint_combination": "/*+ Rows(nation supplier *4.05) Leading( (nation supplier partsupp) ) HashJoin(nation supplier) HashJoin(supplier partsupp) Parallel(partsupp 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环对partsupp的5次重复全表扫描（原总扫描行数达800万+），改用一次哈希连接；2）通过RowsHint修正估计偏差，使优化器正确选择哈希连接而非嵌套循环；3）提升partsupp并行度至8，显著加速大表扫描阶段；4）连接顺序优化使中间结果集增长更平缓，减少后续聚合与排序压力"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "通过校正中间结果集行数估计偏差，强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正nation与supplier连接后结果集的行数估计偏差，避免优化器误判驱动表规模；实际行数为4049，但估计值为4000，偏差极小，但因后续连接膨胀需精确控制",
+      "强制nation作为最外层驱动表，优先过滤出德国供应商，减少后续连接数据量；原计划中nation被嵌套在Nested Loop中，未发挥驱动优势",
+      "强制partsupp与supplier使用哈希连接，替代低效的嵌套循环连接；原执行计划中嵌套循环对supplier进行4049次扫描，导致总耗时占比超80%",
+      "强制partsupp与supplier的哈希连接使用并行扫描，提升大表扫描并行度；原计划中partsupp虽为并行扫描，但未显式控制并行度",
+      "通过Rows Hint精确校正partsupp与supplier连接后的中间结果集行数，使优化器正确评估后续聚合代价"
+    ],
+    "hint_combination": "/*+ Leading( (nation supplier partsupp) ) HashJoin(nation supplier) HashJoin(supplier partsupp) Rows(nation supplier partsupp *0.0005) Parallel(partsupp 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除对supplier的嵌套循环扫描（原4049×5次循环）；2）将partsupp与supplier连接由嵌套循环转为哈希连接，避免重复回表；3）通过Rows Hint校正估计偏差，使优化器正确选择哈希连接路径；4）提升partsupp并行度至8，加速大表扫描。总收益主要来自减少CPU与IO开销，避免磁盘排序与哈希溢出。"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "修正统计信息偏差导致的连接顺序与方法误判，强制以小表nation为驱动，使用哈希连接与并行扫描，消除嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "识别nation表为极小结果集（25行），应作为连接最外层驱动表，纠正优化器错误地将大表partsupp作为驱动的计划",
+      "校正nation与supplier连接后结果集估计偏差：实际行数4049，优化器估计仅4000，但后续连接中partsupp被误估为1999914行，实际为800万，需通过Rows Hint修正中间结果集规模",
+      "强制partsupp与supplier使用哈希连接，替代低效的嵌套循环+位图扫描组合，避免对supplier的重复扫描4049次",
+      "提升partsupp表并行度至4，充分利用其大表特性，加速全表扫描与哈希构建",
+      "禁用nested loop连接方法，防止优化器再次选择低效路径"
+    ],
+    "hint_combination": "/*+ Leading( (nation supplier partsupp) ) Rows(nation supplier *1.01) Rows(supplier partsupp *1.01) HashJoin(nation supplier) HashJoin(supplier partsupp) NoNestLoop(nation supplier) NoNestLoop(supplier partsupp) Parallel(partsupp 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）将nation作为驱动表，避免对supplier的重复扫描；2）强制哈希连接消除嵌套循环的O(n²)开销；3）提升partsupp并行度，加速大表扫描；4）通过Rows Hint校正中间结果集估计偏差，使优化器正确选择高性价比路径"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "通过校正中间结果集行数估计偏差、强制最优连接顺序与哈希连接、提升大表并行度，消除嵌套循环性能瓶颈并加速大表扫描",
+    "core_optimization_points": [
+      "校正nation与supplier连接后的中间结果集行数估计偏差，避免优化器误判驱动表规模；实际行数为4049，但估计为4000，偏差可忽略，无需修正；但需确保连接顺序正确",
+      "强制nation作为最外层驱动表，先过滤出德国供应商，避免早期连接产生过大中间结果；原计划中nation被嵌套在Nested Loop中，未作为最外层驱动表，导致扫描效率低下",
+      "强制partsupp与supplier使用哈希连接，替代低效的嵌套循环连接，避免对partsupp进行5次全表扫描（实际共执行5次Parallel Seq Scan）",
+      "提升partsupp表并行度至8，充分利用其大表特性，加速全表扫描阶段",
+      "强制使用哈希连接而非嵌套循环，解决原计划中因嵌套循环导致的千万级循环开销问题"
+    ],
+    "hint_combination": "/*+ Leading( (nation supplier partsupp) ) HashJoin(nation supplier) HashJoin(supplier partsupp) Parallel(partsupp 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除原计划中对partsupp表的5次全表扫描（共160万行/次）与嵌套循环的高开销；2）通过哈希连接将连接代价从O(n*m)降至O(n+m)；3）并行度提升至8可显著缩短大表扫描时间；4）连接顺序优化避免了中间结果集过早膨胀，整体计划更符合CBO最优路径"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "修正统计信息偏差导致的连接顺序与方法误判，强制小表驱动、哈希连接并提升并行度，消除嵌套循环与大中间结果集瓶颈",
+    "core_optimization_points": [
+      "校正nation表过滤后结果集估计偏差，实际仅1行但优化器估计为1行，需确保其作为驱动表的正确性；通过Rows Hint修正后续连接的中间结果集规模",
+      "调整连接顺序为nation → supplier → partsupp，将最小结果集nation作为最外层驱动表，避免大表提前参与连接导致中间结果膨胀",
+      "强制nation与supplier使用嵌套循环连接，因其连接结果仅4049行，且supplier有高效索引，嵌套循环可高效利用索引",
+      "强制supplier与partsupp使用哈希连接，替代原低效的嵌套循环（实际执行中为Parallel Seq Scan + Nested Loop），避免对partsupp全表扫描的高代价",
+      "提升partsupp表并行度至4，加速大表扫描，充分利用硬件资源",
+      "通过Rows Hint校正连接后中间结果集的估计偏差，使优化器正确评估后续聚合代价"
+    ],
+    "hint_combination": "/*+ Rows(nation supplier *0.0001) Leading( (nation supplier partsupp) ) NestLoop(nation supplier) HashJoin(supplier partsupp) Parallel(partsupp 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）避免对partsupp表进行全表扫描+嵌套循环的高代价执行；2）通过正确连接顺序控制中间结果集规模，防止早期连接产生超大中间结果；3）利用哈希连接高效处理大表连接，减少CPU与IO开销；4）提升并行度加速大表扫描，充分利用多核资源。实际执行中，原计划耗时2187ms，优化后预计可降至400-600ms。"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "修正nation与supplier连接后结果集的严重低估，强制以nation为驱动表并使用哈希连接，避免嵌套循环导致的中间结果膨胀与重复扫描",
+    "core_optimization_points": [
+      "校正nation与supplier连接后结果集的行数估计偏差，实际返回4049行，远高于优化器估计的4000行，但核心问题是嵌套循环引发的重复扫描开销",
+      "调整连接顺序为nation → supplier → partsupp，将最小结果集nation作为最外层驱动表，防止早期连接产生大中间结果",
+      "强制nation与supplier之间使用嵌套循环（NestLoop），因其连接键s_nationkey有高选择性索引，且nation仅25行，嵌套循环代价最低",
+      "强制partsupp与supplier之间使用哈希连接（HashJoin），避免原计划中因并行扫描引发的大量小表重复扫描和内存溢出问题",
+      "提升partsupp表并行度至4，充分利用其大表特性加速全表扫描，提升并行吞吐能力"
+    ],
+    "hint_combination": "/*+ Rows(nation supplier *1.01) Leading( (nation supplier partsupp) ) NestLoop(nation supplier) HashJoin(supplier partsupp) Parallel(partsupp 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）避免嵌套循环对partsupp的5次重复扫描（原计划Workers Launched: 4，实际循环5次）；2）将哈希连接用于大表连接，消除原计划中因并行引发的哈希表重复构建与内存溢出；3）通过Leading调整顺序，使小表nation驱动，降低整体中间结果膨胀风险；4）并行度提升有效压榨大表扫描的I/O并行能力"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "校正nation与supplier过滤后行数估计偏差，强制nation作为驱动表并使用哈希连接，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "修正nation表过滤后行数估计，实际仅1行但优化器估计为1，避免后续连接树误判",
+      "强制nation作为连接驱动表，将小结果集前置，控制中间结果集膨胀",
+      "强制partsupp与supplier之间使用哈希连接，替代低效嵌套循环，避免百万级循环扫描",
+      "提升partsupp表并行度至8，充分利用大表扫描的并行潜力，加速数据读取",
+      "通过Rows Hint校正nation与supplier连接后结果集估计，避免优化器误判中间结果规模"
+    ],
+    "hint_combination": "/*+ Rows(nation *1.0) Leading( (nation supplier partsupp) ) HashJoin(nation supplier) HashJoin(supplier partsupp) Parallel(partsupp 8) Rows(nation supplier *0.1) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自将原本嵌套循环的百万次循环扫描（实际执行时间1497ms）替换为高效哈希连接，同时通过并行扫描加速大表（partsupp）数据读取，避免因估计偏差导致的错误执行路径。并行度提升至8可显著缩短大表扫描时间，整体计划从2187ms降至约500ms以内。"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "通过校正中间结果集行数估计偏差、强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈，提升并行效率",
+    "core_optimization_points": [
+      "校正nation与supplier连接后的中间结果集行数估计，解决优化器对德国供应商数量的严重低估（实际4049行，估计仅4000行）",
+      "强制nation作为最外层驱动表，优先过滤出德国行，控制后续连接结果集规模",
+      "将nation与supplier的连接强制为嵌套循环（NestLoop），利用s_nationkey上的索引高效定位德国供应商",
+      "将partsupp与supplier的连接强制为哈希连接（HashJoin），避免因partsupp大表导致嵌套循环性能崩溃",
+      "提升partsupp表并行度至4，充分利用多核并行加速大表扫描",
+      "通过Rows Hint修正partsupp与supplier连接后结果集的估计行数，消除后续聚合与排序的高开销"
+    ],
+    "hint_combination": "/*+ Rows(nation supplier *1.01) Leading( (nation supplier partsupp) ) NestLoop(nation supplier) HashJoin(partsupp supplier) Parallel(partsupp 4) Rows(partsupp supplier *0.1) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除原计划中对大表partsupp的嵌套循环扫描（实际执行中循环5次，每次扫描160万行）；2）通过哈希连接替代嵌套循环，避免百万级内表扫描开销；3）并行扫描加速大表扫描；4）校正行数估计后，优化器将正确选择低代价路径，避免内存溢出与磁盘排序"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "校正nation与supplier的连接结果集估计偏差，强制将nation作为驱动表并使用哈希连接，避免嵌套循环导致的中间结果膨胀，提升整体执行效率",
+    "core_optimization_points": [
+      "校正nation与supplier连接后的行数估计偏差：优化器估计为4000行，实际为4049行，偏差极小，但因嵌套循环被反复执行5次，需通过Rows Hint抑制优化器对中间结果的误判，防止其错误选择嵌套循环路径",
+      "调整连接顺序为nation → supplier → partsupp，将最小结果集nation作为驱动表，避免大表partsupp过早参与连接，控制中间结果集增长",
+      "强制nation与supplier之间使用哈希连接，替代原嵌套循环连接，避免因nation表虽小但被多次扫描而引入高开销",
+      "强制partsupp与supplier之间的连接使用哈希连接，避免因partsupp表过大导致嵌套循环扫描代价过高",
+      "提升partsupp表的并行扫描并行度至4，充分利用多核资源加速大表扫描，缓解并行不足问题"
+    ],
+    "hint_combination": "/*+ Rows(nation supplier *1.01) Leading( (nation supplier partsupp) ) HashJoin(nation supplier) HashJoin(supplier partsupp) Parallel(partsupp 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）消除nested loop在nation→supplier连接中因多次循环导致的高开销（实际执行5次，每次扫描4049行）；2）强制哈希连接避免了嵌套循环中对supplier的多次Bitmap Index Scan与Heap Scan；3）提升partsupp并行度，加速其160万行的扫描过程；4）校正估计偏差后，优化器更可能选择最优路径，避免次优计划"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "校正统计信息偏差，强制以小表nation为驱动表，优化连接顺序并启用哈希连接，消除嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正nation表过滤后行数估计偏差，修正优化器对驱动表规模的误判（实际1行，估计1行但被误用于大表连接）",
+      "强制连接顺序为nation → supplier → partsupp，确保最小结果集（德国供应商）作为驱动表，避免大表提前膨胀",
+      "强制nation与supplier之间使用嵌套循环（因nation极小且过滤后仅1行，嵌套循环最高效）",
+      "强制supplier与partsupp之间使用哈希连接，替代原低效的嵌套循环，避免对大表partsupp进行千万次扫描",
+      "提升partsupp表并行度至8，加速大表扫描，充分利用多核资源",
+      "通过Rows Hint校正连接中间结果集行数偏差，避免优化器误判连接后数据规模"
+    ],
+    "hint_combination": "/*+ Rows(nation supplier *0.001) Leading( (nation supplier partsupp) ) NestLoop(nation supplier) HashJoin(supplier partsupp) Parallel(partsupp 8) */",
+    "expected_performance_benefit": "预计执行耗时降低75%-85%，核心收益来自将原嵌套循环中对partsupp的千万次扫描（实际64784×5=32万行）替换为一次高效哈希连接，同时通过并行扫描加速大表读取，整体IO与CPU开销显著下降"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "通过校正中间结果集行数估计偏差，强制将nation作为驱动表并优化连接顺序，使用哈希连接替代嵌套循环，显著降低大表扫描与中间结果膨胀带来的性能开销",
+    "core_optimization_points": [
+      "校正nation与supplier连接后的中间结果集行数估计偏差，因优化器低估了德国供应商数量（实际4049行，估计仅4000行，偏差不足10%但需精准校正以避免后续计划误判）",
+      "强制nation作为最外层驱动表，优先过滤出德国行，最小化后续连接的数据量，避免大表partsupp全表扫描前未做有效过滤",
+      "强制partsupp与supplier之间使用HashJoin，替代低效的Nested Loop（原计划中Nested Loop内表supplier被扫描5次，每次4049行，总循环20245次，耗时极高）",
+      "提升partsupp表并行度至4，充分利用其174K页的大数据规模，加速全表扫描阶段",
+      "通过Leading( (nation supplier partsupp) )显式控制连接顺序，确保小结果集nation先驱动，避免早期连接膨胀"
+    ],
+    "hint_combination": "/*+ Rows(nation supplier *1.01) Leading( (nation supplier partsupp) ) HashJoin(nation supplier) HashJoin(supplier partsupp) Parallel(partsupp 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除Nested Loop对supplier的5次重复扫描（原总耗时约1497ms）；2）通过哈希连接将partsupp与supplier连接代价从约205k降至约100k；3）并行扫描加速大表读取；4）连接顺序优化使中间结果集规模从800万行降至约32万行，大幅减少聚合与排序开销"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "修正nation与supplier连接后结果集的严重低估，强制哈希连接并优化连接顺序，消除嵌套循环性能瓶颈，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正nation与supplier连接后中间结果集的行数估计偏差，原估计4000行但实际为4049行，且在子查询中被重复使用，需通过Rows Hint修正整体连接路径的代价模型基础",
+      "调整连接顺序为nation → supplier → partsupp，将过滤后仅1行的nation表作为最外层驱动表，避免早期连接膨胀",
+      "强制supplier与partsupp之间使用HashJoin，替代原嵌套循环连接，解决因supplier表被多次扫描（5次循环）导致的高开销问题",
+      "提升partsupp表的并行扫描并行度至4，充分利用其大表特性，加速全表扫描阶段",
+      "通过Set(work_mem '256MB')提升聚合与哈希操作的内存容量，避免磁盘溢出导致的性能下降"
+    ],
+    "hint_combination": "/*+ Rows(nation supplier *1.01) Leading( (nation supplier partsupp) ) HashJoin(supplier partsupp) Parallel(partsupp 4) Set(work_mem '256MB') */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环对supplier表的5次重复扫描；2）通过哈希连接将原O(n×m)复杂度降为O(n+m)；3）并行扫描加速大表读取；4）内存调优避免磁盘排序/哈希溢出。整体将总执行时间从约2.18秒降至0.6秒以内。"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "通过校正中间结果集行数估计偏差，强制优化连接顺序与哈希连接方法，消除嵌套循环性能瓶颈并提升并行效率",
+    "core_optimization_points": [
+      "校正nation与supplier连接后结果集的行数估计偏差，实际返回4049行，但优化器估计仅4000行，偏差可忽略，无需修正；重点修正partsupp与supplier连接后中间结果集的严重低估问题：实际行数达323920，但优化器估计仅79996，偏差超4倍，需通过Rows Hint强制修正",
+      "调整连接顺序为nation → supplier → partsupp，将最小结果集（nation）作为驱动表，避免早期连接产生大中间结果，符合‘小结果集优先驱动’原则",
+      "强制partsupp与supplier之间使用哈希连接，替代原嵌套循环连接，解决因supplier表被重复扫描4049次导致的性能瓶颈",
+      "提升partsupp表的并行度至4，利用其大表特性并行扫描，加速数据读取阶段",
+      "禁用nation表的顺序扫描，强制使用索引扫描以提升过滤效率，避免全表扫描"
+    ],
+    "hint_combination": "/*+ Rows(partsupp supplier *4.0) Leading( (nation supplier partsupp) ) HashJoin(supplier partsupp) Parallel(partsupp 4) IndexScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）消除嵌套循环对supplier表的重复扫描（原计划循环4049次），2）通过哈希连接将连接代价从O(n×m)降至O(n+m)，3）并行加速partsupp大表扫描，4）强制索引扫描nation提升过滤效率。预计总耗时从2187ms降至约400-600ms。"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "校正统计信息偏差，强制小表驱动、哈希连接与并行扫描，消除嵌套循环性能瓶颈，显著降低中间结果膨胀与IO开销",
+    "core_optimization_points": [
+      "校正nation表过滤后行数估计偏差，避免优化器误判驱动表规模；实际仅1行，但估计为1，需乘以1.0（修正无偏差，但需确保正确识别）",
+      "强制nation作为最外层驱动表，因其过滤后仅1行，应优先连接以控制中间结果集规模",
+      "将nation与supplier连接强制为哈希连接，避免嵌套循环中对supplier的4049次重复扫描",
+      "将supplier与partsupp连接强制为哈希连接，替代原低效的嵌套循环，消除对partsupp的多次全表扫描",
+      "提升partsupp表并行度至4，加速大表扫描，充分利用并行能力",
+      "通过RowsHint校正连接后中间结果集估计偏差，原估计79996行，实际323920行，需乘以约4.04系数"
+    ],
+    "hint_combination": "/*+ Leading( (nation supplier partsupp) ) HashJoin(nation supplier) HashJoin(supplier partsupp) Rows(nation supplier partsupp *4.04) Parallel(partsupp 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）消除nested loop对supplier的4049次循环扫描；2）将partsupp与supplier的连接从嵌套循环转为哈希连接，减少随机IO；3）通过并行扫描加速大表扫描；4）通过RowsHint修正优化器对中间结果集的严重低估，避免错误计划生成。最终实现从2.18秒降至0.5秒以内。"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "修正nation与supplier连接后结果集的严重低估，强制以nation为驱动表并使用哈希连接，避免嵌套循环导致的中间结果膨胀和重复扫描",
+    "core_optimization_points": [
+      "识别并校正nation与supplier连接后实际行数（4049）远高于优化器估计值（4000）的偏差，通过Rows Hint修正中间结果集规模",
+      "调整连接顺序为nation → supplier → partsupp，将最小结果集（nation）作为驱动表，防止大表partsupp过早参与连接导致中间结果膨胀",
+      "强制nation与supplier之间使用哈希连接，替代低效的嵌套循环+位图扫描组合，消除内层循环扫描开销",
+      "强制partsupp与supplier之间使用哈希连接，避免原计划中因嵌套循环导致的重复探测与大表扫描开销",
+      "提升partsupp表并行度至4，充分利用其大表特性加速全表扫描"
+    ],
+    "hint_combination": "/*+ Rows(nation supplier *1.01) Leading( (nation supplier partsupp) ) HashJoin(nation supplier) HashJoin(supplier partsupp) Parallel(partsupp 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环在supplier上的千万级重复扫描；2）通过正确连接顺序控制中间结果集规模；3）并行加速大表扫描，避免单线程全表扫描瓶颈；4）修正估计偏差使优化器选择更合理路径"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "校正统计信息偏差，强制以nation为驱动表并行扫描，优化连接顺序与方法，消除嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正nation表过滤后结果集估计偏差：实际仅1行，但优化器估计为1行（无偏差），但因后续连接链路膨胀，需通过Rows修正中间结果集规模",
+      "强制nation作为最外层驱动表，避免nation被嵌套在Nested Loop中导致多次重复扫描，提升连接顺序合理性",
+      "强制partsupp与supplier使用HashJoin，替代原低效的Nested Loop + Bitmap Scan组合，避免内表被重复扫描4049次",
+      "提升partsupp表并行度至8，充分利用其大表特性，加速全表扫描阶段",
+      "使用IndexOnlyScan替代Seq Scan扫描supplier，因s_nationkey有索引且查询仅需s_suppkey，覆盖索引可避免回表"
+    ],
+    "hint_combination": "/*+ Rows(nation *1.0) Leading( (nation supplier partsupp) ) HashJoin(supplier partsupp) Parallel(partsupp 8) IndexOnlyScan(supplier idx_supplier_nationkey) */",
+    "expected_performance_benefit": "预计执行耗时降低75%以上。核心收益来自：1）消除原计划中对supplier的Bitmap Heap Scan与重复回表开销；2）将原本嵌套循环的4049次内层扫描转化为一次哈希连接；3）通过并行扫描加速partsupp大表读取；4）IndexOnlyScan减少80%以上I/O开销。整体计划从2.18秒降至约0.5秒以内。"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "通过校正中间结果集行数估计偏差、强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正nation与supplier连接后结果集的行数估计偏差，因优化器低估了德国供应商数量（实际4049行，估计仅4000行，偏差1.01倍），但更关键的是纠正后续连接的中间结果膨胀问题",
+      "强制连接顺序为nation → supplier → partsupp，将最小结果集（nation）作为驱动表，避免在partsupp上过早进行全表扫描",
+      "强制nation与supplier之间使用嵌套循环（NestLoop），因nation仅25行且n_name='GERMANY'为等值过滤，且supplier有s_nationkey索引，嵌套循环效率最优",
+      "强制partsupp与supplier之间使用哈希连接（HashJoin），因partsupp表行数巨大（约800万），supplier过滤后约4000行，哈希连接远优于嵌套循环",
+      "提升partsupp表并行扫描并行度至4，加速其大规模顺序扫描过程，充分利用多核资源",
+      "通过Rows Hint校正partsupp与supplier连接后的中间结果集估计偏差，实际行数323,920，优化器估计79,996，偏差约4.05倍，需乘以0.247系数校正"
+    ],
+    "hint_combination": "/*+ Rows(partsupp supplier *0.247) Leading( (nation supplier partsupp) ) NestLoop(nation supplier) HashJoin(supplier partsupp) Parallel(partsupp 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自：1）消除原计划中对800万行partsupp的嵌套循环扫描（原计划实际执行5次，每次扫描160万行）；2）通过哈希连接将大表连接代价从O(n*m)降至O(n+m)；3）并行扫描加速大表扫描；4）正确连接顺序控制中间结果集规模，避免早期膨胀"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "通过校正中间结果集行数估计偏差，强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈并提升并行效率",
+    "core_optimization_points": [
+      "校正nation与supplier连接后结果集的行数估计偏差，优化器低估实际行数近20倍，需通过Rows Hint修正",
+      "调整连接顺序为nation → supplier → partsupp，将最小结果集（nation）作为驱动表，避免早期中间结果膨胀",
+      "强制supplier与partsupp之间使用哈希连接，替代低效的嵌套循环连接，避免对大表partsupp的重复扫描",
+      "提升partsupp表并行度至4，加速其大表顺序扫描过程，充分利用系统并行能力",
+      "启用仅索引扫描（IndexOnlyScan）对supplier表，因s_nationkey有索引且查询仅需该列，无需回表"
+    ],
+    "hint_combination": "/*+ Rows(nation supplier *20) Leading( (nation supplier partsupp) ) HashJoin(supplier partsupp) IndexOnlyScan(supplier idx_supplier_nationkey) Parallel(partsupp 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）纠正nation→supplier连接后行数估计偏差，避免优化器误判为小表驱动；2）强制哈希连接替代嵌套循环，消除对799万行partsupp的重复扫描；3）通过IndexOnlyScan减少supplier表回表开销；4）提升并行度加速大表扫描，整体显著降低IO与CPU开销"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "通过校正中间结果集行数估计偏差，强制优化连接顺序与连接方法，消除嵌套循环性能瓶颈并提升并行效率",
+    "core_optimization_points": [
+      "校正nation与supplier连接后的中间结果集行数估计偏差，实际行数为4049，优化器估计为4000，但因后续连接膨胀严重，需整体修正连接后行数以避免错误计划",
+      "调整连接顺序为nation → supplier → partsupp，将最小结果集nation（25行）作为驱动表，避免大表partsupp过早参与连接导致中间结果膨胀",
+      "强制nation与supplier使用嵌套循环连接，因nation仅1行匹配且s_nationkey有索引，嵌套循环效率最优；同时禁止哈希连接避免无谓开销",
+      "强制partsupp与supplier使用哈希连接，因两表连接结果集达32万行，且supplier无覆盖索引，哈希连接远优于嵌套循环",
+      "提升partsupp表并行度至8，充分利用其大表特性加速扫描，避免单线程扫描成为瓶颈",
+      "通过Rows Hint修正整个连接链的中间结果集规模，使优化器准确估计连接代价，避免误判连接方法"
+    ],
+    "hint_combination": "/*+ Rows(nation supplier partsupp *0.01) Leading( (nation supplier partsupp) ) NoHashJoin(nation supplier) NestLoop(nation supplier) HashJoin(supplier partsupp) Parallel(partsupp 8) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）消除原计划中对大表partsupp的嵌套循环扫描（实际执行160万行×5次循环）；2）通过强制哈希连接替代嵌套循环，将连接代价从O(n×m)降至O(n+m)；3）提升并行度后加速大表扫描；4）通过Rows Hint校正估计偏差，使优化器正确选择最优路径，避免错误的内存溢出与磁盘排序"
+  }
+]

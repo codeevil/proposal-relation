@@ -1,0 +1,254 @@
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "校正优化器对连接结果集的严重行数估计偏差，强制以customer为驱动表并采用哈希连接，消除嵌套循环的指数级性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "识别并校正优化器对customer与orders连接后结果集的严重低估：实际输出行数达150万，而优化器估计仅约150万行（偏差未超10倍），但内层嵌套循环执行150万次，表明其对单次内表扫描代价估计失准，需通过Rows Hint修正连接后中间结果集行数以影响连接方法选择",
+      "强制连接顺序为customer→orders，确保小表（customer）作为驱动表，避免大表orders被重复扫描，防止中间结果膨胀",
+      "强制customer与orders使用HashJoin，替代原低效的Nested Loop Left Join，消除因内表orders被循环扫描150万次导致的高IO与CPU开销",
+      "提升orders表扫描并行度至4，充分利用系统资源加速大表索引扫描，缓解因Parallel Index Only Scan实际仅5个Worker导致的并行不足问题"
+    ],
+    "hint_combination": "/*+ Rows(customer orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) Parallel(orders 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）消除嵌套循环中对orders表的150万次重复索引扫描（原实际耗时6254ms）；2）通过HashJoin将连接代价从O(n×m)降至O(n+m)，大幅降低总IO与CPU开销；3）并行扫描加速orders表的索引扫描，缓解并行不足问题。整体执行时间有望从7.7秒降至1.5秒以内。"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "修正嵌套循环连接中因低估中间结果集导致的性能瓶颈，强制哈希连接并优化连接顺序，显著降低执行耗时",
+    "core_optimization_points": [
+      "校正优化器对orders表连接后行数的严重低估，实际行数远超估计，使用Rows Hint修正中间结果集规模",
+      "调整连接顺序为customer作为驱动表，优先完成小表扫描并尽早聚合，避免大表在嵌套循环中被重复扫描",
+      "强制customer与orders之间使用哈希连接，替代低效的嵌套循环连接，消除内层循环对orders的千万次重复访问",
+      "提升customer表的并行扫描并行度至4，充分利用多核资源加速小表扫描",
+      "禁用orders表的并行扫描，防止其在嵌套循环中被过度并行化导致资源竞争与调度开销"
+    ],
+    "hint_combination": "/*+ Rows(customer orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) Parallel(customer 4) NoParallel(orders) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自消除原计划中对orders表的150万次嵌套循环扫描（实际loops=1500000），通过哈希连接将连接代价从O(n×m)降为O(n+m)，并结合并行加速customer扫描，同时避免orders表并行带来的资源浪费，整体性能实现质的飞跃"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "校正嵌套循环连接中因过滤条件低估导致的行数估计偏差，强制使用哈希连接并优化连接顺序，显著降低大表扫描开销",
+    "core_optimization_points": [
+      "识别并修正`orders`表在`o_comment NOT LIKE '%special%requests%'`条件下的实际过滤选择性，校正优化器对中间结果集的严重低估",
+      "将连接顺序调整为`customer → orders`，确保小结果集驱动大表，避免早期中间结果膨胀",
+      "强制`customer`与`orders`之间使用哈希连接，替代低效的嵌套循环连接，消除内层循环对`orders`的千万级重复扫描",
+      "提升`customer`表的并行扫描Worker数量至5，充分利用多核资源加速驱动表扫描"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) Parallel(customer 5) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）通过`Rows(orders *0.1)`校正优化器对`orders`表过滤后行数的严重低估（实际约150万行，估计为170万，但嵌套循环实际执行150万次，严重放大开销）；2）强制哈希连接消除`orders`表被扫描150万次的嵌套循环开销；3）提升`customer`并行度至5，加速驱动表扫描，与Gather Merge并行结构形成协同加速"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "修正嵌套循环连接中因行数估计偏差导致的性能灾难，强制使用哈希连接并优化连接顺序，提升并行扫描效率，消除大规模循环扫描瓶颈",
+    "core_optimization_points": [
+      "识别并校正优化器对orders表连接后中间结果集的严重低估：实际行数达150万，远超估计值，使用Rows Hint修正估计偏差",
+      "调整连接顺序为customer驱动orders，避免以大表作为内表导致嵌套循环重复扫描千万次，符合‘小结果集驱动’原则",
+      "强制customer与orders之间使用哈希连接，替代低效的嵌套循环连接，显著降低总执行代价",
+      "提升orders表扫描并行度至4，充分利用多核资源加速大表扫描，提升整体吞吐能力",
+      "禁用不必要的索引扫描回表开销，确保扫描路径为最优索引仅扫描（IndexOnlyScan）"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) Parallel(orders 4) IndexOnlyScan(customer customer_pkey) IndexOnlyScan(orders idx_orders_custkey) */",
+    "expected_performance_benefit": "预计执行耗时从7.7秒降至2.3秒以内（降幅60%-70%），核心收益来自消除嵌套循环对orders表的150万次重复扫描，哈希连接大幅降低CPU与IO开销，并行扫描加速大表读取，同时仅索引扫描避免回表开销"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "修正优化器对连接结果集的严重低估，强制使用哈希连接替代嵌套循环，优化连接顺序并提升并行度，彻底消除性能瓶颈",
+    "core_optimization_points": [
+      "校正orders表与customer连接后的中间结果集行数估计偏差，优化器低估了实际连接行数（估计1499964行，实际150万，偏差约10倍），通过Rows Hint修正为真实规模",
+      "调整连接顺序为customer作为驱动表，避免将大表orders作为外层驱动表，防止嵌套循环对大表进行千万级扫描",
+      "强制customer与orders之间使用HashJoin，替代低效的Nested Loop Left Join，消除因嵌套循环导致的O(n×m)时间复杂度",
+      "提升orders表的并行扫描并行度至4，充分利用多核资源加速大表扫描，缓解并行Worker数量不足问题（当前仅4个，但实际可扩展）",
+      "禁用不必要的Memoize缓存，避免在非重复键值场景下引入额外开销"
+    ],
+    "hint_combination": "/*+ Rows(customer orders *1.0) Leading( (customer orders) ) HashJoin(customer orders) Parallel(orders 4) NoMemoize(customer orders) */",
+    "expected_performance_benefit": "预计执行耗时从7738ms降低至2000ms以内（降幅75%以上），核心收益来自：1）消除嵌套循环对orders表的150万次重复扫描；2）通过哈希连接将连接时间从O(n×m)优化为O(n+m)；3）并行度提升加速大表扫描；4）行数估计修正使优化器能正确选择哈希连接路径"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "修正嵌套循环连接中的严重行数估计偏差，强制使用哈希连接并优化连接顺序，消除因驱动表规模误判导致的性能瓶颈",
+    "core_optimization_points": [
+      "校正优化器对orders表在连接后结果集的严重低估，实际行数为估计值的10倍以上，通过Rows Hint修正估计偏差",
+      "调整连接顺序为customer→orders，将小结果集的customer作为驱动表，避免大表orders被重复扫描数百万次",
+      "强制customer与orders使用哈希连接，替代低效的嵌套循环连接，消除外层循环对内表的千万级探测开销",
+      "提升customer表的并行扫描度至5，匹配其被并行扫描的实际情况，释放并行计算能力"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) Parallel(customer 5) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自消除Nested Loop中对orders表的150万次重复扫描（实际循环150万次，每次扫描10行），将O(n×m)复杂度降至O(n+m)；同时并行加速customer表的初始扫描，整体执行时间由7.7秒降至1.8秒以下"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "修正嵌套循环连接中因行数估计偏差导致的性能瓶颈，强制使用哈希连接并优化连接顺序，显著降低中间结果膨胀与扫描开销",
+    "core_optimization_points": [
+      "校正orders表在连接中的行数估计偏差：实际连接结果远小于优化器估计，使用Rows Hint乘以0.1进行修正，消除因估计过高导致的错误连接策略选择",
+      "调整连接顺序为customer→orders，将小结果集驱动表（customer）置于最外层，避免大表orders被重复扫描千万次",
+      "强制customer与orders之间使用HashJoin，替代低效的嵌套循环连接，避免内表orders被每个customer行循环扫描一次",
+      "禁用orders表的索引扫描，防止其因过滤条件不匹配导致回表开销，改用更高效的哈希连接路径",
+      "提升customer表并行扫描并行度至5，充分利用多核资源加速驱动表扫描，与Gather Merge机制协同优化"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) NoIndexScan(orders) Parallel(customer 5) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自消除Nested Loop对orders表的150万次重复扫描（原实际循环150万次，每次索引扫描开销累积），改用HashJoin后连接总代价下降近90%；同时通过Rows Hint修正估计偏差，使优化器正确选择哈希连接路径；并行度提升进一步缩短驱动表扫描时间，整体执行时间从7.7秒降至2秒以内"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "修正嵌套循环连接中因行数估计偏差导致的性能瓶颈，强制使用哈希连接并优化连接顺序，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正orders表在连接中的行数估计偏差，避免优化器误判驱动表规模；实际执行中orders被扫描150万次，但估计仅17行/次，严重低估",
+      "调整连接顺序为customer → orders，使小结果集（customer）作为驱动表，防止大表orders被重复扫描千万次",
+      "强制customer与orders之间使用HashJoin，替代低效的Nested Loop，消除内层循环对orders的重复探测开销",
+      "提升customer表的并行扫描并行度至5，充分利用多核资源加速驱动表扫描，匹配实际并行工作进程数（Workers Launched: 4）",
+      "通过Rows Hint修正连接后中间结果集规模，使优化器正确评估后续聚合代价"
+    ],
+    "hint_combination": "/*+ Rows(customer orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) Parallel(customer 5) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自消除嵌套循环中对orders表的150万次重复索引扫描（原实际耗时6254ms），改用哈希连接后单次构建哈希表即可完成匹配；同时提升customer并行度，加速驱动表扫描，整体计划由7.7秒压缩至1.5秒以内。"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "校正嵌套循环连接中内表行数估计偏差，强制哈希连接并优化连接顺序，消除因统计信息失准导致的性能瓶颈",
+    "core_optimization_points": [
+      "识别并校正orders表在连接中被低估的行数估计，实际执行中每行驱动内表扫描约10次，原估计严重偏低",
+      "调整连接顺序为customer作为驱动表，orders作为被驱动表，符合左外连接语义且避免中间结果膨胀",
+      "强制customer与orders使用哈希连接，替代低效的嵌套循环连接，避免对orders表进行千万级次索引扫描",
+      "通过Rows Hint修正连接后中间结果集规模，使优化器正确评估后续聚合代价"
+    ],
+    "hint_combination": "/*+ Rows(customer orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) Parallel(customer 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除原计划中对orders表的150万次重复索引扫描（实际Loop=1500000）；2）将嵌套循环的O(n×m)复杂度降为哈希连接的O(n+m)；3）通过Rows Hint校正估计偏差，使优化器正确选择哈希连接路径，避免错误的并行Worker分配"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "修正嵌套循环连接中的严重行数估计偏差，强制使用哈希连接并优化连接顺序，消除大表重复扫描瓶颈",
+    "core_optimization_points": [
+      "识别并校正优化器对orders表过滤后行数的严重低估，实际执行中每行customer触发约10次orders扫描，导致总循环次数达150万次，而估计仅约17行/次，偏差超8800倍，需通过Rows Hint修正",
+      "原计划采用Nested Loop Left Join，驱动表customer虽为小表但被并行扫描，导致内表orders被重复扫描150万次，性能灾难；应强制改为HashJoin，以小表customer构建哈希表，大表orders单次探测匹配",
+      "调整连接顺序为customer→orders，使小结果集（customer）作为驱动表，避免大表orders过早参与连接导致中间结果膨胀",
+      "禁用不必要的并行扫描，原计划启动5个Worker，但customer表仅有150万行，单表并行无收益，且增加调度开销；应通过Parallel(orders 0)禁用orders的并行扫描，避免资源浪费",
+      "确保扫描路径最优：customer使用IndexOnlyScan（已有主键索引且无回表需求），orders使用IndexScan（基于o_custkey索引）"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) NoParallel(orders) IndexOnlyScan(customer) IndexScan(orders idx_orders_custkey) */",
+    "expected_performance_benefit": "预计执行耗时从7.7秒降至1.8秒以内（降幅77%以上），核心收益来自消除嵌套循环中对orders表的150万次重复扫描，将O(n×m)复杂度降为O(n+m)；同时避免并行开销与无效扫描，整体性能提升显著"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "修正优化器对连接结果集的严重低估，强制使用哈希连接并优化连接顺序，消除嵌套循环的指数级性能瓶颈",
+    "core_optimization_points": [
+      "识别并校正优化器对customer与orders连接结果集的严重低估（估计149万行，实际150万行，偏差可忽略，但嵌套循环的循环次数被误判）",
+      "强制将customer作为驱动表，orders作为内表，形成左深连接树，避免中间结果膨胀",
+      "强制customer与orders使用HashJoin，替代低效的Nested Loop，避免对orders表进行150万次索引扫描",
+      "通过Rows Hint修正连接后中间结果集的行数估计，防止优化器错误选择嵌套循环",
+      "提升customer表扫描的并行度，加速小表驱动扫描"
+    ],
+    "hint_combination": "/*+ Rows(customer orders *1.0) Leading( (customer orders) ) HashJoin(customer orders) Parallel(customer 4) */",
+    "expected_performance_benefit": "预计执行耗时降低70%-85%。核心收益来自将原嵌套循环中对orders的150万次索引扫描（实际耗时6254ms）替换为一次哈希连接，避免了千万级循环开销；同时并行扫描customer表加速驱动表生成，整体从7.7秒降至1.5秒以内。"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "校正优化器对中间结果集的严重低估，强制使用哈希连接替代嵌套循环，优化连接顺序并提升并行度，消除大表循环扫描瓶颈",
+    "core_optimization_points": [
+      "识别并校正优化器对orders表过滤后行数的严重低估：实际行数远高于估计值，通过Rows Hint修正连接后中间结果集规模",
+      "强制将customer作为驱动表，采用左深连接顺序，避免因orders表无索引导致的嵌套循环膨胀",
+      "强制customer与orders之间使用哈希连接，替代低效的嵌套循环连接，显著降低总执行代价",
+      "提升customer表的并行扫描并行度至5，充分利用多核资源加速小表扫描，避免成为并行瓶颈"
+    ],
+    "hint_combination": "/*+ Rows(customer orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) Parallel(customer 5) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自消除原计划中对150万行的嵌套循环扫描（每行触发一次orders索引扫描），改为一次哈希构建+探测，同时通过并行加速customer扫描，整体减少IO与CPU开销"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "修正优化器对orders表过滤后行数的严重低估，强制以customer为驱动表并采用哈希连接，消除嵌套循环的指数级开销，提升并行扫描效率",
+    "core_optimization_points": [
+      "识别并校正优化器对orders表过滤后行数的严重低估：实际行数为300万，估计仅约17行，偏差超17万倍，使用Rows Hint进行乘法校正",
+      "调整连接顺序为customer→orders，确保小结果集（customer）作为驱动表，避免大表orders被重复扫描千万次",
+      "强制customer与orders使用HashJoin，替代低效的Nested Loop，避免因内表无索引或过滤条件导致的重复探测开销",
+      "提升customer表的并行扫描并行度至5，匹配实际Workers Launched数量，充分利用多核资源加速外层驱动表扫描",
+      "禁用不必要的Memoize缓存，避免在非重复值场景下引入额外开销"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) Parallel(customer 5) NoMemoize(customer orders) */",
+    "expected_performance_benefit": "预计执行耗时从7.7秒降至2.3秒以内（降幅约70%），核心收益来自消除Nested Loop对orders表的150万次重复扫描，将总IO与CPU开销从高阶指数级降至线性水平；并行度提升进一步缩短扫描阶段耗时，整体计划代价由147万降至约45万"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "修正优化器对连接结果集的严重低估，强制以customer为驱动表并使用哈希连接，消除嵌套循环的指数级开销，提升并行效率",
+    "core_optimization_points": [
+      "识别并校正优化器对customer与orders连接后结果集的严重低估：实际输出行数150万，但估计仅149万，偏差约10倍，需通过Rows Hint修正估计值以引导正确计划",
+      "强制连接顺序为customer → orders，确保小结果集（customer）作为驱动表，避免大表orders被反复扫描",
+      "强制使用HashJoin替代嵌套循环连接，消除因内表orders被扫描150万次带来的性能灾难",
+      "提升orders表扫描的并行度至4，利用其大表特性并行加速索引扫描与连接处理"
+    ],
+    "hint_combination": "/*+ Rows(customer orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) Parallel(orders 4) */",
+    "expected_performance_benefit": "预计执行耗时从7.7秒降至2.5秒以内（降幅67%以上），核心收益来自：1）消除嵌套循环中对orders表的150万次重复扫描；2）通过HashJoin将连接代价从O(n×m)降至O(n+m)；3）并行加速大表扫描，充分利用多核资源"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "校正嵌套循环连接的行数估计偏差，强制使用哈希连接并优化连接顺序，消除因驱动表规模误判导致的性能瓶颈",
+    "core_optimization_points": [
+      "识别并校正优化器对orders表连接后中间结果集的严重低估：实际输出行数150万，但估计仅375万，偏差高达10倍以上，需通过Rows Hint修正",
+      "原计划采用Nested Loop Left Join，但内表orders被扫描150万次，每次索引扫描虽快但总开销巨大，应强制改为HashJoin提升效率",
+      "连接顺序为customer→orders，但未利用customer作为小结果集驱动表的优势，应通过Leading强制驱动顺序，避免大表提前参与连接",
+      "orders表数据量大（1500万行），但当前仅使用单线程扫描，应提升并行度以加速索引扫描与连接处理",
+      "customer表已具备主键索引，且无过滤条件，可安全使用Index Only Scan避免回表"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) IndexOnlyScan(customer) Parallel(orders 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环中对orders表的150万次重复索引扫描；2）通过HashJoin将O(n×m)复杂度降为O(n+m)；3）并行扫描加速大表处理；4）Index Only Scan减少回表开销。原计划中7738ms耗时主要集中在Nested Loop的150万次循环扫描，优化后可压缩至2000ms以内。"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "修正优化器对orders表过滤后行数的严重低估，强制以customer为驱动表并采用哈希连接，消除嵌套循环的指数级性能瓶颈，提升并行度加速大表扫描",
+    "core_optimization_points": [
+      "校正orders表在连接后实际行数远高于估计值的问题，通过Rows Hint乘以0.1修正其与customer连接后的中间结果集规模，解决优化器误判驱动表大小的根源问题",
+      "强制连接顺序为customer → orders，确保小结果集的customer作为驱动表，避免大表orders被频繁扫描，控制中间结果膨胀",
+      "强制customer与orders使用HashJoin，替代原低效的嵌套循环连接，避免对orders表进行150万次索引扫描，显著降低总IO与CPU开销",
+      "提升orders表的并行扫描并行度至4，充分利用多核资源，加速大表索引扫描与连接前的数据获取阶段"
+    ],
+    "hint_combination": "/*+ Rows(customer orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) Parallel(orders 4) */",
+    "expected_performance_benefit": "预计执行耗时从7.7秒降至2.3秒以内（降幅60%-70%），核心收益来自：1）消除Nested Loop对orders的150万次重复索引扫描；2）通过哈希连接将连接代价由O(n×m)降为O(n+m)；3）并行扫描加速大表数据读取，整体执行效率实现数量级提升"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "校正嵌套循环连接的行数估计偏差，强制哈希连接以避免大表重复扫描，优化连接顺序并提升并行度，消除性能瓶颈",
+    "core_optimization_points": [
+      "修正orders表与customer连接后的中间结果集行数估计偏差，原估计值严重低估实际结果规模（实际150万行，估计仅约375万行，但实际执行中嵌套循环导致内表被扫描150万次）",
+      "强制customer与orders之间使用哈希连接，替代低效的嵌套循环连接，避免对orders表进行千万级的重复索引扫描",
+      "调整连接顺序为customer→orders，确保小结果集（customer）作为驱动表，控制中间结果集增长速率",
+      "提升orders表扫描的并行度至4，充分利用多核并行能力加速大表扫描",
+      "通过Rows Hint校正连接后结果集规模，使优化器正确评估后续聚合代价"
+    ],
+    "hint_combination": "/*+ Rows(customer orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) Parallel(orders 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自消除Nested Loop中对orders表的150万次重复索引扫描（原实际耗时6254ms），改用哈希连接后，连接阶段耗时可从约7000ms降至1000ms以内；同时并行扫描orders表可进一步加速数据读取，整体执行时间有望从7.7秒降至2秒以下。"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "修正嵌套循环连接中因行数估计偏差导致的性能瓶颈，强制使用哈希连接并优化连接顺序，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正优化器对orders表连接后行数的严重低估，实际行数远高于估计值，使用Rows Hint修正为真实比例",
+      "调整连接顺序为customer→orders，确保小结果集（过滤后）的customer作为驱动表，避免大表orders被循环扫描",
+      "强制customer与orders使用哈希连接，替代低效的嵌套循环连接，消除千万级循环扫描开销",
+      "提升orders表扫描的并行度至4，充分利用多核资源加速大表扫描与连接过程"
+    ],
+    "hint_combination": "/*+ Rows(customer orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) Parallel(orders 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自消除嵌套循环中对orders表的150万次重复扫描（实际循环150万次，每次扫描约10行），通过哈希连接将总代价从O(n×m)降至O(n+m)，并行扫描加速大表IO，整体性能瓶颈从排序与循环扫描转移至并行哈希连接，显著提升吞吐效率"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "修正嵌套循环连接中因行数估计偏差导致的性能瓶颈，强制使用哈希连接并优化连接顺序，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正优化器对orders表连接后结果集的严重低估，实际行数远超估计值，通过Rows Hint修正为合理规模",
+      "调整连接顺序为customer作为驱动表，避免大表orders被频繁扫描，控制中间结果集膨胀",
+      "强制customer与orders之间使用HashJoin，替代低效的嵌套循环连接，避免内表被循环扫描150万次",
+      "提升customer表的并行扫描并行度至5，充分利用多核资源加速小表扫描",
+      "禁用orders表的索引扫描，防止其因过滤条件导致无效回表，改用更高效的扫描路径"
+    ],
+    "hint_combination": "/*+ Rows(customer orders *0.1) Leading( (customer orders) ) HashJoin(customer orders) Parallel(customer 5) NoIndexScan(orders) */",
+    "expected_performance_benefit": "预计执行耗时从7739ms降至2500ms以内（降幅68%），核心收益来自消除嵌套循环对orders表的150万次重复扫描，哈希连接大幅降低IO与CPU开销，同时并行扫描加速驱动表扫描"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "校正嵌套循环连接的行数估计偏差，强制使用哈希连接并优化连接顺序，消除因低估中间结果集导致的性能瓶颈",
+    "core_optimization_points": [
+      "识别并修正优化器对customer与orders连接后中间结果集的严重低估（估计1499964行，实际150万行，偏差可忽略，但实际执行中嵌套循环因驱动表膨胀导致内表扫描超频）",
+      "强制将customer作为驱动表，orders作为内表，通过Leading控制连接顺序，避免大表驱动小表的错误路径",
+      "强制customer与orders之间使用HashJoin，替代原低效的Nested Loop，消除内表orders被循环扫描150万次的性能灾难",
+      "通过Rows Hint校正连接后中间结果集行数估计，提升优化器对哈希连接代价的判断准确性",
+      "提升customer表的并行扫描并行度至4，充分利用多核资源加速驱动表扫描"
+    ],
+    "hint_combination": "/*+ Rows(customer orders *1.0) Leading( (customer orders) ) HashJoin(customer orders) Parallel(customer 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自将原嵌套循环中对orders表的150万次重复扫描（实际执行时间6254ms）替换为一次哈希构建+一次探测，消除指数级循环开销；同时通过并行扫描加速customer驱动表读取，整体执行路径从‘千万级循环扫描’优化为‘一次哈希连接+并行扫描’，性能跃迁显著"
+  }
+]

@@ -1,0 +1,258 @@
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "基于统计信息校正行数估计偏差，强制使用索引扫描减少全表扫描开销，优化连接顺序并提升并行度以加速大表处理",
+    "core_optimization_points": [
+      "识别并校正`lineitem`表在`l_shipdate <= '1998-09-02'`条件下的行数估计偏差，优化器低估了实际过滤结果集规模",
+      "强制对`lineitem`表使用`IndexScan`，利用`idx_lineitem_shipdate`索引避免全表扫描，显著降低IO代价",
+      "将原并行顺序扫描（Parallel Seq Scan）替换为并行索引扫描，提升扫描效率并减少随机IO",
+      "通过`Rows` Hint修正中间结果集规模，防止优化器因估计偏差选择低效的连接路径",
+      "提升`lineitem`表的并行扫描worker数量至8，充分利用多核资源加速大表数据读取"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.25) IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）避免对5999万行的大表进行全表扫描，改用索引扫描减少约99%的IO；2）通过`Rows` Hint校正估计偏差（实际过滤后行数约1180万，优化器估计仅约300万，偏差超3倍），防止错误选择嵌套循环或低效聚合路径；3）并行度提升至8，使大表扫描阶段并行加速，显著缩短I/O瓶颈。最终整体执行时间从15.25秒降至4秒以内。"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "基于统计信息修正过滤后行数估计偏差，强制使用索引扫描避免全表扫描，优化连接顺序并提升并行度，消除大表顺序扫描与排序瓶颈",
+    "core_optimization_points": [
+      "校正`lineitem`表在`l_shipdate <= '1998-09-02'`条件下的行数估计偏差，优化器低估实际过滤结果，导致错误选择全表扫描",
+      "强制对`lineitem`表使用`IndexScan`，利用`idx_lineitem_shipdate`索引进行高效范围扫描，避免1.18亿行的全表顺序扫描",
+      "调整执行计划中`lineitem`为唯一扫描源，消除`Parallel Seq Scan`带来的高IO开销和不必要的并行资源消耗",
+      "提升`lineitem`表并行度至4，充分利用多核并行加速索引扫描与聚合前的数据读取",
+      "通过`Rows` Hint校正中间聚合结果集估计，避免`Partial HashAggregate`与`Sort`节点因估计偏差导致内存溢出或额外排序开销"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.2) IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低75%以上，核心收益来自将原15秒的全表扫描替换为基于索引的高效扫描（预计扫描行数从1.18亿降至约2400万），并行加速数据读取；同时避免了因估计偏差引发的排序/哈希内存溢出问题，整体执行路径从‘全表扫描+并行聚合’优化为‘索引扫描+并行聚合’，显著减少IO与CPU开销"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "基于统计信息修正行数估计偏差，强制使用索引扫描避免全表扫描，并提升并行度以加速大表过滤与聚合，消除排序与哈希溢出瓶颈",
+    "core_optimization_points": [
+      "校正并行顺序扫描的行数估计偏差：实际过滤后行数约1182万，远高于优化器估计的1476万（偏差约1.5倍），但结合表总行数5999万与过滤条件选择性，合理修正为更准确的估计值，避免优化器误判连接代价",
+      "强制对lineitem表使用索引扫描（idx_lineitem_shipdate），避免全表扫描导致的高IO开销，提升过滤效率",
+      "提升lineitem表并行扫描Worker数量至8，匹配其大表规模与高并发读取能力，充分利用CPU资源加速扫描",
+      "避免排序与哈希溢出：通过提前过滤与索引扫描减少中间结果集规模，降低Sort和HashAggregate阶段内存压力，防止磁盘溢出",
+      "禁用SeqScan，强制使用IndexScan，确保扫描路径最优，杜绝不必要的顺序扫描"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) NoSeqScan(lineitem) Parallel(lineitem 8) Rows(lineitem *0.2) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%，核心收益来自将原15秒的全表扫描替换为基于索引的高效过滤扫描，减少约98%的IO操作；并行度提升至8可进一步缩短扫描时间；同时避免了排序与哈希磁盘溢出，整体执行效率显著跃升"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "基于统计信息修正行数估计偏差，强制使用索引扫描加速过滤，优化连接顺序并提升并行度，消除大表全表扫描与嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正l_shipdate过滤后行数估计偏差：优化器估计约1476万行，实际仅1182万行，但未充分反映过滤选择性，通过Rows Hint修正中间结果集规模",
+      "强制对lineitem表使用索引扫描（idx_lineitem_shipdate），避免全表扫描，显著降低IO开销",
+      "调整执行计划逻辑，避免因无连接而误判为并行顺序扫描，强制使用索引扫描路径以尽早过滤数据",
+      "提升lineitem表并行度至8，匹配其超大表规模，最大化并行处理能力，缩短扫描耗时",
+      "避免排序与哈希聚合在多Worker间重复执行，通过索引扫描减少输入数据量，降低聚合阶段压力"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.8) IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）强制使用idx_lineitem_shipdate索引扫描，将112万页全表扫描转为仅扫描满足l_shipdate条件的约120万行数据（实际扫描页数减少90%以上）；2）提升并行度至8，充分利用CPU资源加速大表扫描；3）通过Rows Hint校正优化器对过滤后行数的低估，避免后续聚合阶段因中间结果集规模误判而引发低效执行计划"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "基于统计信息修正行数估计偏差，强制使用索引扫描避免全表扫描，优化连接顺序并提升并行度，消除大表顺序扫描与排序瓶颈",
+    "core_optimization_points": [
+      "校正l_shipdate过滤后行数估计偏差，优化器低估实际过滤结果，导致错误选择全表扫描；通过Rows Hint修正中间结果集规模",
+      "强制对lineitem表使用IndexScan，利用l_shipdate索引进行高效范围扫描，避免1.18亿行的全表顺序扫描",
+      "调整连接顺序为单表聚合，消除不必要的Gather Merge与Sort开销，因无多表连接，仅需单表分组聚合",
+      "提升lineitem表并行度至8，充分利用大表扫描的并行潜力，提升I/O吞吐能力",
+      "禁用Sort节点的内存排序，避免因work_mem不足导致的外部磁盘排序，通过索引扫描自然有序实现排序优化"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.2) IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时从15.25秒降至3.5秒以内（降幅约77%），核心收益来自：1）避免1.18亿行的全表扫描，改用索引扫描；2）并行加速大表数据读取；3）消除Sort节点的磁盘溢出开销。统计信息显示l_shipdate选择性约为2516/5999万 ≈ 0.042%，实际过滤后行数约1180万，优化器估计仅约295万（偏差约4倍），通过Rows Hint校正后，优化器将更合理地选择索引扫描路径。"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "强制使用索引扫描过滤大表，校正行数估计偏差并提升并行度，消除全表扫描与排序瓶颈",
+    "core_optimization_points": [
+      "识别并强制对lineitem表使用索引扫描，避免代价高昂的全表顺序扫描",
+      "基于l_shipdate列的高选择性（n_distinct=2516，总行数5999万），校正优化器对过滤后行数的严重低估",
+      "通过Rows Hint修正扫描后中间结果集的估计偏差，避免后续聚合与排序的代价误判",
+      "提升lineitem表并行度至8，充分利用多核资源加速大表扫描",
+      "禁止排序操作，避免内存或磁盘溢出导致的性能骤降"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *0.05) Parallel(lineitem 8) NoSort(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自：1）避免全表扫描带来的112万页顺序IO；2）通过索引扫描将过滤后行数从1182万降至合理估计值；3）并行扫描提升I/O吞吐；4）消除排序开销，避免内存溢出。优化后计划将从‘Parallel Seq Scan’转为‘Parallel Index Scan’，总代价预计下降至原计划的20%以下。"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "强制使用索引扫描减少全表扫描开销，校正行数估计偏差并提升并行度，消除排序与哈希溢出瓶颈，显著降低执行耗时",
+    "core_optimization_points": [
+      "识别并强制对lineitem表使用索引扫描，避免高代价的全表顺序扫描，提升过滤效率",
+      "基于统计信息计算实际过滤选择性，校正优化器对l_shipdate条件后结果集的严重低估（估计1476万行，实际1182万行，偏差约1.25倍）",
+      "提升并行扫描worker数量至8，充分利用大表扫描的并行潜力，加速数据读取",
+      "通过强制IndexScan避免后续聚合阶段的内存压力，减少Sort和Hash的磁盘溢出风险"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *1.25) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%，核心收益来自：1）避免112万页的全表扫描，改用索引扫描减少随机IO；2）通过Rows Hint校正估计偏差，使优化器更可能选择高效路径；3）提升并行度至8，充分利用多核CPU加速大表扫描；4）减少后续聚合阶段的内存压力，避免Sort/Hash磁盘溢出"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "强制使用索引扫描过滤大表，校正行数估计偏差，避免全表扫描与嵌套循环性能瓶颈，提升并行度以加速数据读取",
+    "core_optimization_points": [
+      "识别到原计划使用Parallel Seq Scan扫描lineitem表，但存在严重行数估计偏差（实际过滤后行数约1180万，但优化器估计仅约1476万，偏差不足10倍，但实际执行时间高达15秒，说明扫描效率低）",
+      "根据统计信息，l_shipdate列n_distinct=2516，总行数5999万，查询条件为l_shipdate <= '1998-09-02'，保守估计选择性约1/3（约1/3的行满足条件），实际过滤后行数约1180万，远高于优化器估计的1476万行，但仍在可接受范围，因此不需大幅修正行数，但必须强制使用索引扫描以避免全表扫描",
+      "发现存在idx_lineitem_shipdate索引，且l_shipdate为日期类型，适合等值或范围查询，应强制使用IndexScan避免全表扫描",
+      "当前计划中未使用索引，导致并行顺序扫描耗时极高，且排序和聚合阶段压力大，应优先通过索引扫描减少输入数据量",
+      "提升lineitem表并行度至4，充分利用多核资源加速扫描，避免单线程瓶颈"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时从15.25秒降至3.5秒以内，降幅超过77%。核心收益来自：1）强制使用idx_lineitem_shipdate索引扫描，将原本的全表扫描（约112万页）替换为仅扫描满足条件的索引页，大幅降低IO开销；2）并行度提升至4，加速数据读取；3）减少后续聚合与排序的输入数据量，整体执行路径更优。该方案完全符合pg_hint_plan语法规范，无冲突，表名与SQL中一致，可直接嵌入执行。"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "基于统计信息修正行数估计偏差，强制使用索引扫描过滤大表，避免全表扫描与嵌套循环性能瓶颈，提升并行度以加速大结果集聚合",
+    "core_optimization_points": [
+      "校正`lineitem`表在`l_shipdate <= '1998-09-02'`条件下的行数估计偏差，优化器低估实际过滤后行数，导致错误选择并行顺序扫描",
+      "强制对`lineitem`表使用`IndexScan`，利用已存在的`idx_lineitem_shipdate`索引进行高效扫描，避免全表扫描的高IO开销",
+      "通过`Rows` Hint修正优化器对`lineitem`扫描后中间结果集的估计，防止后续聚合节点因估计偏差导致计划错误",
+      "提升`lineitem`表的并行扫描Worker数量至8，充分利用系统CPU资源，加速大表扫描阶段",
+      "禁用`Sort`节点的`quicksort`内存排序，强制使用`External Merge`排序，避免内存溢出导致磁盘IO"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *1.5) IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 8) Set(work_mem '64MB') */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）避免对5999万行大表进行全表扫描，改用索引扫描减少随机IO；2）修正行数估计偏差，防止优化器误判连接路径；3）提升并行度至8，充分利用多核CPU加速扫描；4）通过`work_mem`调优减少排序磁盘溢出，显著提升聚合阶段性能。"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "基于统计信息校正行数估计偏差，强制使用索引扫描提前过滤，优化连接顺序并提升并行度，消除全表扫描与排序瓶颈",
+    "core_optimization_points": [
+      "校正`lineitem`表在`l_shipdate <= '1998-09-02'`条件下的行数估计偏差，实际过滤后行数约为1182万，远低于优化器估计的1476万，但需修正其对后续聚合的影响",
+      "强制使用`idx_lineitem_shipdate`索引扫描，避免全表顺序扫描导致的高IO开销",
+      "将`lineitem`表的扫描方式从并行顺序扫描改为并行索引扫描，提升数据访问效率",
+      "通过`Rows` Hint校正聚合前中间结果集的估计值，防止优化器误判为小结果集而选择低效的嵌套循环结构",
+      "提升`lineitem`表并行度至8，充分利用多核CPU加速大表扫描与聚合"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 8) Rows(lineitem *0.8) */",
+    "expected_performance_benefit": "预计执行耗时从15.25秒降至4.5~6秒，降幅达60%-70%。核心收益来自：1）避免对5999万行的全表扫描，改用索引扫描仅读取约1180万行；2）并行索引扫描显著降低IO延迟；3）通过`Rows` Hint修正优化器对中间结果集的误判，防止其生成低效的嵌套循环或排序路径；4）减少内存排序开销，避免`Sort Method: quicksort`在高内存压力下的性能退化"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "强制使用索引扫描过滤大表，校正行数估计偏差并提升并行度，消除全表扫描与嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "识别并纠正优化器对l_shipdate过滤后行数的严重低估，避免错误选择嵌套循环连接",
+      "强制对lineitem表使用索引扫描，利用l_shipdate索引高效定位符合条件的数据，避免全表扫描",
+      "通过Rows Hint校正过滤后中间结果集的行数估计，使优化器正确评估连接代价",
+      "提升lineitem表的并行扫描Worker数量至8，充分释放I/O并行能力，加速大表扫描"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *0.05) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）避免1180万行数据的全表扫描，改用索引扫描减少随机IO；2）校正估计偏差后，优化器将不再误判为小结果集，从而避免错误的嵌套循环路径；3）提升并行度至8，显著加速大表扫描阶段，尤其在高吞吐I/O环境下表现突出"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "基于统计信息修正行数估计偏差，强制使用索引扫描减少全表扫描开销，优化连接顺序并提升并行度，消除大表顺序扫描与排序瓶颈",
+    "core_optimization_points": [
+      "校正`lineitem`表在`l_shipdate <= '1998-09-02'`条件下的行数估计偏差，优化器低估实际过滤后数据量，导致错误选择并行顺序扫描而非索引扫描",
+      "强制对`lineitem`表使用`IndexScan`，利用已存在的`idx_lineitem_shipdate`索引，避免全表扫描带来的巨大IO开销",
+      "调整执行计划中`lineitem`作为唯一表的扫描路径，消除不必要的`Parallel Seq Scan`与`Sort`开销",
+      "提升`lineitem`表的并行度至4，充分利用大表扫描的并行潜力，加速数据读取",
+      "通过`Rows` Hint校正`lineitem`表的过滤后行数估计，使其与实际执行结果对齐，防止优化器误判连接代价"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.2) IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自将原耗时15秒的全表扫描替换为高效索引扫描，减少约1100万次随机IO；并行度提升进一步缩短扫描时间；`Rows` Hint校正估计偏差后，优化器将更合理地评估后续聚合代价，避免因中间结果膨胀导致的排序与哈希开销。"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "基于统计信息校正行数估计偏差，强制使用索引扫描减少全表扫描开销，优化连接顺序并提升并行度，消除大表顺序扫描与排序瓶颈",
+    "core_optimization_points": [
+      "校正`lineitem`表在`l_shipdate <= '1998-09-02'`条件下的行数估计偏差，实际返回约1182万行，远高于优化器估计，需通过`Rows` Hint修正",
+      "强制对`lineitem`表使用`IndexScan`，利用`idx_lineitem_shipdate`索引进行高效过滤，避免全表扫描带来的高IO代价",
+      "调整执行计划结构，使`lineitem`作为唯一扫描表提前完成过滤，避免后续聚合前产生超大中间结果",
+      "提升`lineitem`表的并行度至4，充分利用多核资源加速大表扫描，提升整体吞吐",
+      "禁用`Sort`节点的内存排序，避免因`work_mem`不足导致磁盘溢出，提升排序效率"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.85) IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）通过`IndexScan`避免对5999万行数据的全表扫描，将IO从112万页降至约20万页；2）`Rows` Hint校正估计偏差，使优化器正确选择索引路径；3）并行扫描加速数据读取，尤其在大表过滤后仍需处理海量数据的场景下效果显著；4）消除`Sort`节点因内存不足导致的磁盘溢出，避免性能暴跌"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "基于统计信息校正行数估计偏差，强制使用索引扫描加速过滤，优化连接顺序并提升并行度，消除全表扫描与排序瓶颈",
+    "core_optimization_points": [
+      "校正并行顺序扫描的行数估计偏差，实际过滤后行数约1182万，远超优化器估计值，使用Rows Hint修正中间结果集规模",
+      "强制对lineitem表使用索引扫描，利用l_shipdate索引提前过滤，避免全表扫描带来的高IO开销",
+      "将连接顺序调整为单表聚合路径，避免不必要的分组与排序开销，直接在扫描阶段完成聚合",
+      "提升lineitem表并行度至4，匹配数据规模与CPU核心数，最大化并行扫描效率",
+      "禁用不必要的Sort节点，因GROUP BY字段已可通过索引有序输出，避免内存排序开销"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.2) IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 4) NoSort(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%，核心收益来自：1）避免全表扫描，改用索引扫描减少IO；2）通过Rows Hint修正优化器对过滤后行数的严重低估；3）并行扫描加速大表读取；4）消除不必要的排序开销，使聚合在索引扫描中直接完成"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "基于统计信息修正行数估计偏差，强制使用索引扫描提前过滤，避免全表扫描与无效嵌套循环，显著降低中间结果集规模与执行耗时",
+    "core_optimization_points": [
+      "识别并修正优化器对lineitem表过滤后行数的严重低估：实际返回约1182万行，而估计仅约1476万行，但实际行数与估计偏差较小，核心问题在于未使用有效索引扫描，导致全表扫描开销巨大",
+      "强制对lineitem表使用索引扫描，利用l_shipdate索引实现高效范围过滤，避免Parallel Seq Scan带来的高IO代价",
+      "通过Rows Hint校正优化器对中间聚合结果的估计，避免因估计偏差导致的排序与哈希内存溢出风险",
+      "提升并行度至4，充分利用多核资源加速大表扫描，与现有并行设置保持一致但更合理地应用在索引扫描路径上"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Rows(lineitem *0.8) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自将原本耗时15秒的Parallel Seq Scan替换为高效索引扫描，减少约90%的IO操作；同时通过Rows Hint校正聚合前的中间结果集估计，避免Sort和HashAggregate阶段因内存不足导致的磁盘溢出；并行度提升进一步加速大表扫描，整体执行路径从全表扫描转向精准索引驱动，实现性能质变"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "基于统计信息校正行数估计偏差，强制使用索引扫描过滤大表，优化连接顺序并提升并行度，消除全表扫描与嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正并行顺序扫描的行数估计偏差：实际过滤后行数约为1182万，远高于优化器估计值，使用Rows Hint修正中间结果集规模",
+      "强制对lineitem表使用索引扫描（idx_lineitem_shipdate），避免全表扫描带来的高IO开销",
+      "通过Leading Hint调整连接顺序，确保分组聚合在索引扫描后执行，最小化中间结果集大小",
+      "提升lineitem表并行度至4，充分利用多核CPU加速大表扫描",
+      "禁用不必要的排序，因GROUP BY字段已具备天然有序性（索引支持），避免额外排序开销"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.2) Leading( (lineitem) ) IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 4) NoSort(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自将原本耗时15.25秒的全表扫描替换为高效索引扫描，避免对5999万行数据的顺序读取；并通过并行扫描与准确的行数估计，使优化器正确选择低代价路径，彻底消除嵌套循环与排序的性能瓶颈"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "基于统计信息校正行数估计偏差，强制使用索引扫描过滤大表，避免全表扫描与低效排序，显著降低执行耗时",
+    "core_optimization_points": [
+      "识别并校正优化器对l_shipdate过滤后行数的严重低估：实际过滤后行数约1182万，远超估计值，通过Rows Hint修正中间结果集规模",
+      "强制对lineitem表使用索引扫描（idx_lineitem_shipdate），避免全表扫描导致的高IO开销，提升过滤效率",
+      "消除不必要的并行排序开销：原计划中Sort节点消耗近15秒，因数据已按l_returnflag、l_linestatus分组，通过强制索引扫描使数据自然有序，避免排序",
+      "提升并行度至4，充分利用多核资源加速大表扫描，同时避免并行不足导致的性能瓶颈"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.1) IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时从15.25秒降至4.5秒以内（降幅约70%），核心收益来自：1）避免全表扫描，减少约110万次顺序IO；2）消除Sort节点的15秒排序开销；3）通过索引扫描实现高效过滤与自然有序输出，提升聚合效率"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "基于统计信息修正行数估计偏差，强制使用索引扫描避免全表扫描，优化连接顺序并提升并行度，彻底消除大表扫描与排序瓶颈",
+    "core_optimization_points": [
+      "校正l_shipdate过滤后结果集估计偏差：实际返回约1182万行，远超优化器估计，通过Rows Hint强制修正中间结果集规模",
+      "强制lineitem表使用索引扫描（idx_lineitem_shipdate），避免代价高昂的全表顺序扫描，减少随机IO与无效数据读取",
+      "调整连接顺序为单表分组聚合，消除不必要的并行排序与Gather Merge开销，直接在单节点完成聚合",
+      "提升lineitem表并行度至8，充分利用多核CPU加速大表扫描，提升整体吞吐能力",
+      "禁用不必要的Sort节点：因GROUP BY字段已有序，且结果集小，无需额外排序"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.2) IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 8) NoSort(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时从15.25秒降至3.5~5秒内，降幅达70%以上。核心收益来自：1）避免全表扫描，减少IO达90%以上；2）通过索引扫描精准定位数据，减少无效读取；3）提升并行度并消除排序开销，显著降低CPU与内存压力"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "基于统计信息修正过滤后行数估计偏差，强制使用索引扫描减少全表扫描开销，并优化连接顺序与并行度以提升整体执行效率",
+    "core_optimization_points": [
+      "识别并修正`lineitem`表在`l_shipdate <= '1998-09-02'`条件下的行数估计偏差：优化器预估1476万行，实际仅1182万行，但未命中索引扫描，导致并行全表扫描耗时严重",
+      "强制对`lineitem`表使用`IndexScan`，利用已存在的`idx_lineitem_shipdate`索引，避免全表扫描带来的高IO开销",
+      "由于查询仅涉及`lineitem`单表，无实际连接，因此无需`Leading`或连接方法Hint，但需确保扫描路径最优",
+      "提升`lineitem`表并行度至4，充分利用多核CPU资源加速索引扫描与聚合过程",
+      "通过`Rows` Hint校正`lineitem`扫描后中间结果集的行数估计，避免后续聚合阶段因估计偏差引发次优计划"
+    ],
+    "hint_combination": "/*+ IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 4) Rows(lineitem *0.8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自将原并行顺序扫描（15秒级）替换为并行索引扫描，显著减少随机IO与数据读取量；同时`Rows` Hint校正了优化器对过滤后行数的高估，使执行计划更贴近真实负载，避免不必要的内存与并行资源浪费。"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "基于统计信息校正行数估计偏差，强制使用索引扫描减少全表扫描开销，优化连接顺序并提升并行度，消除大表顺序扫描与排序瓶颈",
+    "core_optimization_points": [
+      "校正`lineitem`表在`l_shipdate <= '1998-09-02'`条件下的行数估计偏差，优化器低估实际返回行数，导致错误选择全表扫描路径",
+      "强制对`lineitem`表使用`IndexScan`，利用已存在的`idx_lineitem_shipdate`索引，避免代价高昂的并行顺序扫描",
+      "通过`Rows` Hint修正优化器对`lineitem`扫描后中间结果集的估计，防止后续聚合节点误判代价",
+      "提升`lineitem`表的并行度至4，充分利用硬件资源加速大表扫描",
+      "避免`Sort`节点因内存不足触发外部排序，通过`work_mem`调优与索引扫描提前排序减少排序开销"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.2) IndexScan(lineitem idx_lineitem_shipdate) Parallel(lineitem 4) Set(work_mem '64MB') */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自：1）避免对5999万行的大表进行全表扫描，改用索引扫描减少随机IO；2）通过`Rows` Hint校正估计偏差，防止优化器误选低效路径；3）提升并行度充分利用CPU资源；4）`work_mem`调优减少排序磁盘溢出，整体执行时间由15.25秒降至4秒以内"
+  }
+]

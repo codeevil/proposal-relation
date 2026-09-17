@@ -1,0 +1,270 @@
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "校正子查询中lineitem与partsupp连接的严重行数估计偏差，强制哈希连接并优化连接顺序，消除嵌套循环的指数级性能瓶颈",
+    "core_optimization_points": [
+      "识别并校正子查询中lineitem与partsupp连接的行数估计严重偏差：优化器估计仅1行，实际执行中触发86,204次循环，导致总耗时高达7.6秒",
+      "强制partsupp与part之间使用哈希连接，替代低效的嵌套循环+索引扫描组合，避免对每行part重复执行子查询",
+      "通过Leading提示重构连接顺序，优先扫描小表part并提前过滤，再与partsupp连接，控制中间结果集规模",
+      "提升lineitem表并行度至8，加速大表扫描与位图扫描阶段的IO瓶颈",
+      "禁用不必要的BitmapAnd与BitmapOr，强制使用位图扫描+回表，避免因索引组合导致的额外开销"
+    ],
+    "hint_combination": "/*+ Rows(part *0.001) Rows(partsupp *0.0005) Leading( (part partsupp) ) HashJoin(part partsupp) Parallel(lineitem 8) NoBitmapScan(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时从7.67秒降至1.8秒以内，降幅达76%以上。核心收益来自消除嵌套循环对lineitem的8.6万次重复扫描，通过哈希连接将子查询代价从O(n²)降至O(n)，并行加速大表扫描，同时校正统计信息偏差使优化器做出正确路径选择"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "校正多层子查询导致的严重行数估计偏差，强制将小结果集驱动表前置并采用哈希连接，消除嵌套循环的指数级开销，提升并行扫描效率",
+    "core_optimization_points": [
+      "修正part表过滤后行数估计偏差，原估计20202行，实际仅21551行，但子查询中被误判为高选择性，需通过Rows Hint校正连接中间结果集规模",
+      "识别出nested loop连接中，part表作为内表被扫描21551次，每次触发lineitem子查询，导致子查询执行86204次，是性能瓶颈核心，应强制使用哈希连接替代嵌套循环",
+      "将nation与supplier的连接提前，作为驱动表起点，因nation仅1行，supplier过滤后仅4054行，应作为最小驱动表前置",
+      "强制partsupp与part之间使用HashJoin，避免因索引扫描导致的重复访问和位图扫描开销",
+      "提升lineitem表并行度至4，加速其在子查询中的扫描效率，避免单线程成为瓶颈",
+      "使用Rows Hint校正partsupp与part连接后结果集的估计偏差，原估计26935行，实际58655行，修正系数约为2.18"
+    ],
+    "hint_combination": "/*+ Rows(part *1.05) Rows(partsupp part *2.18) Leading( (nation supplier (part (partsupp lineitem))) ) HashJoin(part partsupp) HashJoin(part partsupp lineitem) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环中对lineitem的86204次重复扫描；2）将原低效的nested loop+bitmap scan结构替换为高效哈希连接；3）通过并行扫描加速大表lineitem的子查询执行；4）校正行数估计后，优化器将正确选择哈希连接路径，避免错误的嵌套循环决策"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "校正子查询中lineitem与partsupp的行数估计偏差，强制先过滤再连接，避免嵌套循环对大表的重复扫描，提升连接效率并加速整体执行",
+    "core_optimization_points": [
+      "校正part与partsupp连接后的中间结果集行数估计，修正优化器对森林类零件数量的严重低估（实际21551行，估计仅20202行）",
+      "强制part与partsupp使用索引扫描（IndexScan）而非顺序扫描，避免对part表全表扫描导致的IO开销",
+      "强制lineitem在子查询中使用位图扫描（BitmapScan）结合多索引条件，减少随机IO并提升过滤效率",
+      "将part与partsupp的连接顺序前置，形成先过滤后连接的最优路径，防止中间结果膨胀",
+      "强制partsupp与supplier之间使用哈希连接（HashJoin），替代原嵌套循环导致的千万级循环扫描",
+      "提升nation表扫描的并行度为2，加速小表过滤"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *1.07) IndexScan(part) IndexScan(partsupp) BitmapScan(lineitem) Leading( (part partsupp) (nation supplier) ) HashJoin(partsupp supplier) Parallel(nation 2) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除对lineitem的重复全表扫描（原SubPlan执行86204次，每次扫描64万Heap Blocks）；2）将嵌套循环转为哈希连接，避免supplier表被重复扫描4054次；3）通过Rows Hint修正估计偏差，使优化器正确选择高效路径；4）并行加速nation小表过滤，整体执行时间由7.67秒降至2秒以内"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "校正嵌套循环中子查询结果集的严重估计偏差，强制将小表驱动的哈希连接作为主路径，避免大表重复扫描，显著降低整体执行时间",
+    "core_optimization_points": [
+      "识别并校正子查询中`part`表过滤后行数严重低估问题，实际返回21551行，而优化器仅估计20202行，但后续连接因嵌套循环导致内层`partsupp`被重复扫描86204次，形成性能瓶颈",
+      "强制`part`与`partsupp`之间使用`IndexScan`而非`SeqScan`，避免全表扫描，提升内层连接效率",
+      "将`nation`作为最外层驱动表，通过`Leading`强制连接顺序为`nation → supplier → partsupp → part`，确保小结果集（加拿大供应商）优先驱动，控制中间结果集膨胀",
+      "强制`supplier`与`partsupp`之间使用`HashJoin`替代`NestLoop`，消除因`supplier`实际行数4054远高于估计值4000而导致的嵌套循环重复扫描开销",
+      "对`lineitem`子查询中涉及的`BitmapAnd`扫描启用`IndexScan`，避免位图扫描在高并发下产生大量随机IO，提升子查询执行效率",
+      "提升`part`表扫描并行度至4，加速大表过滤阶段的扫描速度"
+    ],
+    "hint_combination": "/*+ Rows(part *1.07) Leading( (nation supplier partsupp part) ) HashJoin(supplier partsupp) IndexScan(part idx_part_brand) IndexScan(lineitem idx_lineitem_partkey) IndexScan(lineitem idx_lineitem_suppkey) Parallel(part 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环对`partsupp`的86204次重复扫描；2）将`supplier`与`partsupp`连接由嵌套循环改为哈希连接，避免外层循环开销；3）通过`Rows` Hint修正`part`表选择性估计偏差，使优化器正确评估中间结果规模；4）并行加速`part`表扫描，提升过滤效率。整体执行计划将从7.67秒降至2秒以内。"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "修正多层子查询导致的严重行数估计偏差，强制最优连接顺序与哈希连接，避免嵌套循环对大表的指数级扫描，提升并行度以加速大表处理",
+    "core_optimization_points": [
+      "校正子查询中`part`表的过滤选择性估计偏差，修正优化器对`forest%`匹配结果的严重低估",
+      "校正`partsupp`与`lineitem`连接后的中间结果集估计，消除嵌套循环中因高基数连接键导致的千万次循环扫描",
+      "调整连接顺序为`nation`→`supplier`→`part`→`partsupp`→`lineitem`，将小结果集`nation`作为驱动表，避免早期中间结果膨胀",
+      "强制`part`与`partsupp`使用哈希连接，替代低效的嵌套循环扫描，避免对`partsupp`的重复索引扫描",
+      "强制`partsupp`使用索引扫描（`partsupp_pkey`）以高效定位`ps_partkey`匹配行，避免全表扫描",
+      "提升`lineitem`表并行度至8，加速大表聚合与过滤操作",
+      "通过`Rows` Hint修正`part`与`partsupp`连接后的结果集估计，防止优化器误判为小结果集而选择错误连接方法"
+    ],
+    "hint_combination": "/*+ Rows(part *0.01) Rows(partsupp *0.001) Leading( (nation (supplier (part (partsupp lineitem)))) ) HashJoin(part partsupp) HashJoin(partsupp lineitem) IndexScan(partsupp partsupp_pkey) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时从7672ms降至1500ms以内，降幅达80%以上。核心收益来自消除`lineitem`子查询中86204次重复扫描，避免`partsupp`表的嵌套循环重复访问，同时通过并行扫描加速大表聚合，哈希连接显著降低连接开销"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "修正子查询中lineitem与partsupp连接的严重行数估计偏差，强制使用哈希连接并优化连接顺序，避免嵌套循环导致的千万级循环扫描",
+    "core_optimization_points": [
+      "校正子查询中partsupp与lineitem连接后的行数估计偏差，实际行数远超估计值，需通过Rows Hint修正",
+      "强制partsupp与lineitem使用哈希连接，替代低效的嵌套循环+位图扫描组合，避免对lineitem的重复全表扫描",
+      "调整连接顺序，先执行part表过滤，再与partsupp连接，减少中间结果集规模",
+      "对lineitem表启用并行扫描，提升大表扫描效率，充分利用多核CPU资源",
+      "强制使用IndexOnlyScan扫描part表，因p_name列无索引但过滤条件为前缀匹配，需结合统计信息判断是否可覆盖扫描"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *0.01) Leading( (part partsupp) ) HashJoin(part partsupp) HashJoin(partsupp lineitem) Parallel(lineitem 8) IndexOnlyScan(part p_partkey) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自消除原计划中对lineitem的86,204次重复扫描（每次扫描约0.08ms），通过哈希连接将子查询代价从7637ms降至1500ms以内；并行扫描提升大表扫描效率，结合IndexOnlyScan减少回表开销，整体性能显著跃升。"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "修正多层子查询导致的严重行数估计偏差，强制最优连接顺序与哈希连接，避免嵌套循环对大表的指数级扫描，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正子查询中`part`表与`partsupp`表连接后的行数估计偏差，因实际匹配行数远低于优化器估计，需乘以修正系数以避免误判为小结果集",
+      "强制`part`与`partsupp`使用索引扫描而非顺序扫描，避免全表扫描导致的高IO开销",
+      "调整连接顺序为`nation → supplier → partsupp → part → lineitem`，将小结果集`nation`作为驱动表，控制中间结果膨胀",
+      "强制`supplier`与`partsupp`使用哈希连接，替代原低效的嵌套循环连接，避免对`partsupp`的数万次重复探测",
+      "提升`lineitem`表并行度至4，加速其在多条件过滤下的扫描过程，充分利用并行执行优势",
+      "使用`Rows` Hint修正`part`与`partsupp`连接后的中间结果集估计，防止优化器错误选择嵌套循环"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *0.01) IndexScan(part idx_part_brand) IndexScan(partsupp partsupp_pkey) Leading( (nation (supplier (partsupp part)) (lineitem)) ) HashJoin(supplier partsupp) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自消除`partsupp`与`lineitem`之间嵌套循环的千万级循环扫描（原执行时间占总耗时95%以上），通过强制哈希连接和并行扫描大幅降低IO与CPU开销，同时校正估计偏差使优化器选择更合理路径"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "修正子查询中lineitem与partsupp连接的严重行数估计偏差，强制使用哈希连接并优化连接顺序，消除嵌套循环的指数级开销",
+    "core_optimization_points": [
+      "校正子查询中lineitem与partsupp连接的实际行数估计，原估计仅1行但实际触发86204次循环，严重低估，使用Rows Hint修正为乘以100倍",
+      "将连接顺序调整为先扫描part（过滤forest%），再通过索引扫描partsupp，最后连接lineitem，避免全表扫描和重复回表",
+      "强制part与partsupp之间使用IndexScan，利用ps_partkey主键索引，避免全表扫描",
+      "强制partsupp与lineitem之间的连接使用HashJoin，替代低效的Nested Loop + Bitmap Scan组合，避免每行都触发子查询",
+      "提升lineitem表并行度至8，加速大表扫描与过滤"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *100) Leading( (part partsupp lineitem) ) IndexScan(part) IndexScan(partsupp) HashJoin(partsupp lineitem) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时从7672ms降至1500ms以内，降幅达80%以上。核心收益来自消除原计划中86,204次嵌套循环子查询的重复扫描开销，同时通过哈希连接与并行扫描显著加速大表处理。"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "修正嵌套循环中严重低估的中间结果集规模，强制哈希连接以替代低效嵌套循环，优化连接顺序并提升大表并行度，全面消除性能瓶颈",
+    "core_optimization_points": [
+      "校正子查询中`part`与`partsupp`连接后结果集的严重低估（实际行数58655，估计仅26935），通过`Rows` Hint修正估计偏差，防止优化器错误选择嵌套循环",
+      "强制`part`与`partsupp`之间使用哈希连接，避免因`partsupp`索引扫描后需对每行执行`lineitem`子查询而导致的千万级循环开销",
+      "调整连接顺序为`nation → supplier → partsupp`作为驱动链，优先过滤`CANADA`小表，再通过`supplier`索引快速定位，避免早期连接膨胀",
+      "提升`lineitem`表并行度至8，加速其在子查询中作为大表扫描的性能，充分利用高I/O能力的SSD存储环境",
+      "强制`part`表使用索引扫描而非顺序扫描，确保`p_name LIKE 'forest%'`的高选择性过滤能高效命中索引"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *2.18) HashJoin(part partsupp) Leading( (nation supplier (part partsupp)) ) IndexScan(part idx_part_brand) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低75%-85%，核心收益来自消除`partsupp`与`lineitem`之间嵌套循环的千万级循环开销（原耗时7637ms），通过哈希连接和并行扫描将大表扫描效率最大化，同时修正估计偏差使优化器正确选择最优路径"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "修正多层子查询导致的严重行数估计偏差，强制先过滤并聚合小结果集，通过优化连接顺序与方法消除嵌套循环性能瓶颈，提升并行效率",
+    "core_optimization_points": [
+      "校正子查询中lineitem与partsupp连接后的行数估计偏差，因优化器低估了过滤后结果集规模，导致错误选择嵌套循环连接",
+      "强制将part与partsupp的连接改为哈希连接，避免对每行part执行一次索引扫描，显著降低内层循环开销",
+      "调整连接顺序，优先执行nation与supplier的连接，作为驱动表，减少后续连接的中间结果膨胀",
+      "强制对lineitem使用位图扫描，利用多索引组合条件（l_partkey, l_suppkey, l_shipdate）提升过滤效率",
+      "提升partsupp与lineitem扫描的并行度，加速大表扫描过程"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *20) Rows(lineitem *5) Leading( (nation supplier) (part partsupp) (lineitem) ) HashJoin(part partsupp) HashJoin(nation supplier) NoNestLoop(part partsupp) BitmapScan(lineitem) Parallel(lineitem 8) Parallel(partsupp 4) */",
+    "expected_performance_benefit": "预计执行耗时降低70%-85%。核心收益来自：1）纠正子查询中lineitem与partsupp连接的严重行数低估（原估计仅6行，实际3万+），避免嵌套循环执行86,204次；2）强制哈希连接替代嵌套循环，消除每行part触发一次索引扫描的开销；3）位图扫描与并行度提升显著加速大表过滤，整体执行路径从O(n²)退化为O(n log n)级复杂度"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "修正嵌套循环中子查询结果集的严重估计偏差，强制优化连接顺序与哈希连接，消除大表多次扫描瓶颈",
+    "core_optimization_points": [
+      "校正子查询中`lineitem`与`partsupp`连接后中间结果的行数估计偏差，避免优化器误判为仅3行，实际触发86204次循环扫描",
+      "强制`part`与`partsupp`使用索引扫描（IndexScan）以避免全表扫描，提升内层连接效率",
+      "调整连接顺序，将`nation`作为最外层驱动表，优先过滤出加拿大供应商，减少后续连接数据量",
+      "强制`supplier`与`partsupp`使用哈希连接（HashJoin），替代原低效嵌套循环，避免对4054个供应商逐个扫描`partsupp`",
+      "提升`lineitem`表并行度至8，加速大表范围扫描与聚合操作"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *0.001) IndexScan(part) IndexScan(partsupp) Leading( (nation (supplier (part partsupp))) ) HashJoin(supplier partsupp) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低75%-85%，核心收益来自消除嵌套循环中`lineitem`子查询的86204次重复扫描，通过强制哈希连接与并行扫描显著减少IO与CPU开销，同时修正估计偏差使优化器选择更合理的连接路径"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "修正多层子查询导致的严重行数估计偏差，强制最优连接顺序与哈希连接，消除嵌套循环的指数级开销",
+    "core_optimization_points": [
+      "校正子查询中`part`表的过滤选择性，修正优化器对`part`行数的严重低估（实际返回21551行，估计仅20202行，偏差1.06倍）",
+      "校正`partsupp`与`part`连接后的中间结果集估计行数，实际为58655行，优化器估计仅26935行，偏差2.18倍，使用Rows Hint强制修正",
+      "调整连接顺序为`nation → supplier → partsupp → part → lineitem`，将小结果集`nation`作为驱动表，避免早期连接膨胀",
+      "强制`partsupp`与`part`使用哈希连接，替代低效的嵌套循环连接，避免对`part`表进行21551次索引扫描",
+      "强制`lineitem`表使用位图扫描（BitmapScan），利用`idx_lineitem_partkey`与`idx_lineitem_suppkey`构建位图，减少随机IO",
+      "提升`lineitem`表并行度至8，加速大表扫描与位图构建，充分利用系统资源"
+    ],
+    "hint_combination": "/*+ Rows(part *1.06) Rows(partsupp part *2.18) Leading( (nation supplier (part (lineitem partsupp))) ) HashJoin(partsupp part) HashJoin(partsupp part lineitem) BitmapScan(lineitem) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低70%-85%，核心收益来自消除`lineitem`子查询中对`partsupp`的21551次嵌套循环扫描，将`partsupp`与`part`连接由嵌套循环改为哈希连接，同时通过位图扫描与并行处理显著提升大表扫描效率，避免内存溢出与磁盘排序"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "校正子查询中lineitem与partsupp的行数估计偏差，强制先过滤再连接，避免嵌套循环中对大表的重复扫描，提升连接效率并减少中间结果膨胀",
+    "core_optimization_points": [
+      "识别并修正子查询中`part`与`partsupp`连接后结果集的严重低估问题，实际行数远高于估计值，通过Rows Hint校正估计偏差",
+      "强制`part`与`partsupp`使用哈希连接，替代原低效的嵌套循环+索引扫描组合，避免在`partsupp`上执行86,204次独立索引扫描",
+      "调整连接顺序，优先扫描小表`nation`并作为驱动表，确保`supplier`与`nation`连接后结果集最小化，防止中间结果膨胀",
+      "对`lineitem`表启用位图扫描，结合多索引条件（l_partkey, l_suppkey）高效定位匹配行，避免全表扫描和大量随机IO",
+      "通过Leading强制整体连接顺序为nation→supplier→part→partsupp→lineitem，确保小结果集优先驱动大表扫描，控制中间结果规模"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *0.5) HashJoin(part partsupp) Leading( (nation supplier part partsupp lineitem) ) BitmapScan(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自消除对`lineitem`的86,204次重复扫描（原SubPlan 1执行86,204次），将嵌套循环转为哈希连接后，减少CPU与IO开销；同时通过Leading控制连接顺序，避免早期中间结果膨胀，结合BitmapScan提升大表过滤效率，整体执行路径更符合数据规模与索引特征"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "修正多层子查询导致的严重行数估计偏差，强制先过滤小结果集并采用哈希连接，避免嵌套循环对大表的指数级扫描",
+    "core_optimization_points": [
+      "识别并校正子查询中`part`表过滤后实际行数远小于估计值的问题，通过Rows Hint修正其与`partsupp`连接后的中间结果集估计",
+      "强制将`nation`与`supplier`的连接作为最外层驱动，利用其极小结果集（仅1行）作为驱动表，控制连接顺序以避免早期中间结果膨胀",
+      "将`part`与`partsupp`之间的嵌套循环连接强制替换为哈希连接，避免对`partsupp`的重复全表扫描（原计划中`partsupp`被扫描86204次）",
+      "提升`lineitem`表并行度至8，加速其在子查询中作为位图扫描源的扫描性能，缓解大表IO瓶颈",
+      "通过Leading顺序控制，确保小表`nation`先执行，再驱动`supplier`，最后与`part`-`partsupp`聚合结果连接，形成最优左深树结构"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *0.01) Leading( (nation supplier (part partsupp)) ) HashJoin(part partsupp) HashJoin(nation supplier) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低75%以上。核心收益来自消除原计划中`partsupp`被重复扫描8.6万次的嵌套循环性能灾难，同时通过哈希连接和并行扫描显著加速大表数据获取，配合行数估计校正使优化器正确选择低代价路径"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "校正多层子查询导致的严重行数估计偏差，强制将小结果集驱动表前置并使用哈希连接，消除嵌套循环的指数级开销，提升并行扫描效率",
+    "core_optimization_points": [
+      "识别并修正子查询中`part`表过滤后实际行数（21,551）远超优化器估计值（20,202），通过Rows Hint校正其上游连接结果集规模",
+      "强制将`nation`作为最外层驱动表，因其仅1行匹配，可极大控制中间结果集膨胀",
+      "将`part`与`partsupp`之间的连接从嵌套循环改为哈希连接，避免对`partsupp`进行86,204次重复索引扫描",
+      "对`lineitem`子查询中的位图扫描强制使用`IndexOnlyScan`，减少回表开销，提升聚合性能",
+      "提升`partsupp`和`lineitem`表的并行扫描度，加速大表数据读取"
+    ],
+    "hint_combination": "/*+ Rows(part *1.06) Leading( (nation (part (partsupp (lineitem supplier)))) ) HashJoin(part partsupp) HashJoin(partsupp lineitem) IndexOnlyScan(lineitem idx_lineitem_partkey idx_lineitem_suppkey) Parallel(partsupp 4) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时从7672ms降至1800ms以内（降幅76%以上），核心收益来自消除`lineitem`子查询中86,204次重复扫描，避免`partsupp`表的嵌套循环膨胀，同时通过并行加速大表读取与索引扫描，显著降低IO与CPU开销"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "修正子查询中行数严重低估问题，强制优化连接顺序与连接方法，消除嵌套循环的指数级性能开销",
+    "core_optimization_points": [
+      "校正`part`表过滤后结果集的行数估计偏差，原估计20202行，实际21551行，但子查询中`part`被多次重复扫描，导致`partsupp`连接的中间结果被严重低估",
+      "强制`part`与`partsupp`使用索引扫描（IndexScan）以避免全表扫描，提升连接效率",
+      "将连接顺序调整为`nation → supplier → partsupp → part`，先通过`nation`过滤出`CANADA`，再通过`supplier`索引快速定位，避免早期连接产生大中间结果",
+      "强制`partsupp`与`part`使用哈希连接（HashJoin），替代原低效的嵌套循环+索引扫描组合，避免对`partsupp`的每行都触发一次`lineitem`子查询",
+      "提升`lineitem`表并行度至8，加速大表扫描与位图扫描的并行执行",
+      "通过`Rows` Hint校正`partsupp`与`part`连接后的中间结果集估计，原估计26935行，实际58655行，修正系数为2.18，防止优化器误判为小结果集"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *2.18) Leading( (nation (supplier (partsupp part))) ) IndexScan(part idx_part_brand) IndexScan(partsupp partsupp_pkey) HashJoin(partsupp part) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低75%以上，核心收益来自消除`lineitem`子查询的86204次重复执行（原嵌套循环中每行`partsupp`触发一次），并行加速大表扫描，同时通过正确连接顺序和哈希连接避免中间结果膨胀，整体执行路径从O(n²)级退化为O(n log n)级"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "修正子查询中lineitem与partsupp连接的严重行数估计偏差，强制先过滤part表并使用哈希连接，避免嵌套循环导致的千万级循环扫描，显著降低整体执行耗时",
+    "core_optimization_points": [
+      "校正子查询中part与partsupp连接后的行数估计，原估计仅6行，实际为58655行，偏差超9700倍，使用Rows Hint强制修正",
+      "调整连接顺序，将过滤后结果集最小的nation表作为最外层驱动表，再依次连接supplier与partsupp，避免早期中间结果膨胀",
+      "强制part与partsupp使用HashJoin，替代原低效的Index Scan + NestLoop结构，避免对每条part记录重复扫描lineitem",
+      "强制lineitem表使用BitmapScan，利用其多索引组合条件（l_partkey, l_suppkey）的优势，减少随机IO开销",
+      "提升part表扫描并行度至4，加速大表过滤操作"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *9700) Leading( (nation supplier (part partsupp)) ) HashJoin(part partsupp) BitmapScan(lineitem) Parallel(part 4) */",
+    "expected_performance_benefit": "预计执行耗时从7672ms降至1500ms以内，降幅达80%以上。核心收益来自消除嵌套循环中对lineitem的86204次重复扫描，同时通过哈希连接和位图扫描大幅降低IO与CPU开销，提升并行度进一步加速大表过滤"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "修正嵌套循环中内表扫描的严重行数估计偏差，强制哈希连接以避免千万级循环开销，提升并行度并优化连接顺序以控制中间结果膨胀",
+    "core_optimization_points": [
+      "校正子查询中`part`与`partsupp`连接后的行数估计偏差，因优化器低估了`forest%`过滤后的结果集规模，实际行数远高于估计值",
+      "强制`part`与`partsupp`之间使用哈希连接，替代低效的嵌套循环+索引扫描结构，避免对`partsupp`进行数万次重复访问",
+      "调整连接顺序，将小结果集的`nation`与`supplier`作为驱动表，先完成`CANADA`筛选与`supplier`过滤，再与`partsupp`连接，控制中间结果集规模",
+      "提升`lineitem`表并行度至8，加速大表聚合与过滤操作，缓解`BitmapAnd`与`Aggregate`节点的IO瓶颈",
+      "通过`Rows` Hint修正`partsupp`与`lineitem`连接后中间结果的估计偏差，避免优化器错误选择嵌套循环"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *3.2) Leading( (nation supplier (part partsupp)) ) HashJoin(part partsupp) HashJoin(nation supplier) HashJoin(supplier partsupp) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自消除`partsupp`被`part`驱动的嵌套循环中高达86,204次的重复扫描（原执行时间7637ms），通过哈希连接将该部分代价从O(n×m)降至O(n+m)，同时并行扫描加速`lineitem`聚合与过滤，整体计划从7.67秒降至2秒以内。"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "修正子查询中行数严重低估问题，强制先过滤并聚合，调整连接顺序，避免嵌套循环对大表的重复扫描，提升整体执行效率",
+    "core_optimization_points": [
+      "校正子查询中lineitem的行数估计偏差，避免因统计信息失准导致嵌套循环执行次数爆炸",
+      "强制将part与partsupp连接改为哈希连接，替代低效的嵌套循环+索引扫描组合",
+      "调整连接顺序，先完成part过滤与partsupp连接，再与supplier和nation连接，控制中间结果集膨胀",
+      "对lineitem表启用位图扫描并利用多索引组合过滤，减少随机IO开销",
+      "提升partsupp与lineitem的并行度，加速大表扫描与聚合"
+    ],
+    "hint_combination": "/*+ Rows(part *0.01) Rows(partsupp *0.01) Leading( (part partsupp) (supplier nation) ) HashJoin(part partsupp) HashJoin(supplier nation) IndexScan(part idx_part_brand) BitmapScan(lineitem idx_lineitem_partkey idx_lineitem_suppkey) Parallel(partsupp 4) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自消除原计划中对lineitem的86,204次重复扫描（SubPlan 1），通过校正估计偏差和强制哈希连接，将原本指数级增长的嵌套循环改为高效并行聚合；同时通过提前过滤part和partsupp，控制中间结果集规模，避免大表无谓连接。"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "修正嵌套循环中内层子查询的行数估计偏差，强制使用哈希连接并优化连接顺序，避免大表重复扫描，提升整体执行效率",
+    "core_optimization_points": [
+      "校正子查询中`part`与`partsupp`连接后的行数估计偏差，原估计仅26935行，实际为58655行，修正系数约为2.18，防止优化器低估中间结果集规模",
+      "调整连接顺序，将`nation`和`supplier`作为最外层驱动表，先完成小表过滤与连接，避免大表`partsupp`过早参与连接",
+      "强制`part`与`partsupp`之间使用哈希连接，替代低效的嵌套循环+索引扫描，避免对`partsupp`进行数万次重复索引扫描",
+      "强制`part`表使用索引扫描（`idx_part_brand`虽存在，但未被使用），提升`p_name LIKE 'forest%'`的过滤效率",
+      "提升`lineitem`表并行度至8，加速其在子查询中作为大表的扫描与位图构建过程"
+    ],
+    "hint_combination": "/*+ Rows(part partsupp *2.18) Leading( (nation (supplier (part partsupp))) ) HashJoin(part partsupp) IndexScan(part idx_part_brand) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自消除`partsupp`表在嵌套循环中被重复扫描86,204次的性能灾难，同时通过哈希连接和并行扫描显著加速大表处理，预计总执行时间从7.67秒降至2秒以内"
+  }
+]

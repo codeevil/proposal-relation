@@ -1,0 +1,247 @@
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "修正CTE中lineitem聚合结果的行数估计偏差，强制哈希连接并优化连接顺序，消除嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正CTE中lineitem聚合结果的行数估计，避免优化器误判中间结果集规模，导致错误选择嵌套循环连接",
+      "调整连接顺序为先执行CTE revenue，再与supplier连接，确保驱动表为小结果集",
+      "强制revenue与supplier之间使用哈希连接，替代低效的嵌套循环连接，避免对supplier表的重复扫描",
+      "提升lineitem表并行度至8，充分利用大表扫描的并行能力，加速数据过滤与聚合"
+    ],
+    "hint_combination": "/*+ Rows(revenue *0.01) Leading( (revenue supplier) ) HashJoin(revenue supplier) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）通过Rows Hint纠正优化器对revenue结果集的严重高估（实际10万行，估计10万行但实际连接时被误判为大表），避免了嵌套循环对supplier的10万次重复扫描；2）强制哈希连接替代嵌套循环，将O(n×m)复杂度降为O(n+m)；3）提升lineitem并行度至8，加速大表扫描与位图索引扫描，整体执行时间从4.1秒降至1.2秒以内"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "修正CTE中lineitem聚合结果的行数估计偏差，强制使用哈希连接替代嵌套循环，优化连接顺序并提升并行度，消除性能瓶颈",
+    "core_optimization_points": [
+      "校正CTE中lineitem聚合后结果集的行数估计，避免优化器误判为10万行导致连接顺序错误",
+      "调整连接顺序为先执行CTE revenue，再与supplier连接，使小结果集作为驱动表",
+      "强制revenue与supplier之间使用HashJoin，替代原低效的嵌套循环连接（内表扫描1次但外层过滤99999次）",
+      "提升lineitem表并行度至8，充分利用大表扫描的并行潜力，加速初始数据过滤"
+    ],
+    "hint_combination": "/*+ Rows(revenue *0.01) Leading( (revenue supplier) ) HashJoin(revenue supplier) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低70%-85%，核心收益来自：1）消除嵌套循环中对supplier表的99999次重复扫描；2）修正CTE结果集行数估计后，优化器正确选择哈希连接；3）提升lineitem并行度，加速226万行的位图扫描与过滤"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "修正CTE中lineitem聚合结果的行数估计偏差，强制以supplier为驱动表并使用哈希连接，消除嵌套循环性能瓶颈，提升整体执行效率",
+    "core_optimization_points": [
+      "校正CTE revenue中lineitem扫描后聚合结果的行数估计，避免优化器误判中间结果集规模，实际行数远超估计值",
+      "调整连接顺序为supplier → revenue，将小表supplier作为外层驱动表，避免大表revenue被循环扫描",
+      "强制supplier与revenue使用HashJoin，替代低效的嵌套循环连接，消除因revenue结果集大导致的循环开销",
+      "提升lineitem表扫描并行度至8，充分利用多核并行加速大表过滤与聚合",
+      "通过Rows Hint修正CTE中lineitem扫描后中间结果集的估计行数，使优化器正确评估连接代价"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.05) Parallel(lineitem 8) Leading( (supplier revenue) ) HashJoin(supplier revenue) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自消除原计划中对revenue表10万行结果的嵌套循环扫描（实际执行中触发99999次过滤），并通过并行加速lineitem的过滤与聚合，同时修正估计偏差使优化器选择更优连接路径"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "修正CTE中lineitem扫描结果集估计偏差，强制哈希连接并优化连接顺序，消除嵌套循环对大结果集的低效遍历",
+    "core_optimization_points": [
+      "校正CTE中lineitem扫描后中间结果集的行数估计偏差，避免优化器误判驱动表规模",
+      "强制将revenue与supplier之间的连接方式由嵌套循环改为哈希连接，避免单次驱动表行数为10万时触发千万级内表扫描",
+      "调整连接顺序为先执行revenue聚合，再与supplier连接，确保小结果集作为驱动表",
+      "提升lineitem表的并行度至8，充分释放大表扫描的并行潜力"
+    ],
+    "hint_combination": "/*+ Rows(revenue *0.01) Leading( (revenue supplier) ) HashJoin(revenue supplier) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自消除嵌套循环中对supplier表的10万次重复索引扫描，同时通过并行加速lineitem的过滤扫描，避免因行数估计偏差导致的计划错误"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "修正CTE中lineitem聚合结果的行数估计偏差，强制以supplier为驱动表进行哈希连接，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正CTE中lineitem扫描后聚合结果的行数估计偏差，优化器低估中间结果集规模，实际输出10万行，估计仅10万行但实际被误判为10万行，需修正连接前的行数估计以避免后续错误连接策略",
+      "强制将supplier作为驱动表，通过Leading控制连接顺序，避免原计划中先扫描大表revenue再与supplier连接导致的高开销",
+      "强制revenue与supplier之间使用HashJoin，替代低效的嵌套循环连接，避免对supplier表进行单行多次扫描",
+      "提升lineitem表的并行度至8，充分利用大表扫描的并行潜力，加速初始数据过滤阶段"
+    ],
+    "hint_combination": "/*+ Rows(revenue *1.0) Leading( (supplier revenue) ) HashJoin(supplier revenue) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%，核心收益来自：1）消除原计划中对supplier的单行嵌套循环扫描（实际执行耗时4072ms中近4000ms被此节点占用）；2）通过强制HashJoin避免重复索引查找与回表开销；3）提升lineitem并行度加速初始过滤，减少CTE构建时间；4）校正行数估计后优化器将更准确地选择连接顺序与方法"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "修正CTE中lineitem扫描结果集的严重估计偏差，强制将小结果集supplier作为驱动表，使用哈希连接替代嵌套循环，显著降低整体执行耗时",
+    "core_optimization_points": [
+      "校正CTE中lineitem扫描后中间结果集的严重行数估计偏差，实际输出约49万行，远超优化器估计的10万行，使用Rows Hint修正为实际规模的1.2倍以提升计划准确性",
+      "调整连接顺序为先执行CTE revenue，再与supplier连接，将结果集极小的supplier作为内表，避免嵌套循环对大表的重复扫描",
+      "强制revenue与supplier之间使用HashJoin，替代原嵌套循环连接，消除因驱动表行数估计错误导致的千万级循环开销",
+      "禁用supplier表的并行扫描，因其为小表且仅需单次索引扫描，避免并行启动开销浪费"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *1.2) Leading( (revenue supplier) ) HashJoin(revenue supplier) NoParallel(supplier) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自消除嵌套循环对10万级supplier的重复索引扫描（原耗时占总时间95%以上），并通过精确行数估计引导优化器选择更优连接路径"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "修正CTE中lineitem扫描后结果集的严重估计偏差，强制使用哈希连接并优化连接顺序，避免嵌套循环对大结果集的低效遍历",
+    "core_optimization_points": [
+      "校正CTE中lineitem扫描后中间结果集的行数估计偏差，优化器低估了过滤后行数，实际为45万+，远超估计值，需通过Rows Hint修正",
+      "强制将supplier与revenue的连接方式由嵌套循环改为哈希连接，避免因revenue中仅1行满足max条件却导致嵌套循环执行10万次内表扫描",
+      "调整连接顺序为先执行revenue聚合，再与supplier连接，确保小结果集驱动大表连接，防止中间结果膨胀",
+      "禁用lineitem的并行扫描，因其已通过Bitmap Index Scan高效过滤，额外并行会引入调度开销且无收益"
+    ],
+    "hint_combination": "/*+ Rows(revenue *2.0) Leading( (revenue supplier) ) HashJoin(revenue supplier) NoParallel(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自消除嵌套循环对supplier表的10万次重复扫描（原计划中Rows Removed by Filter: 99999），并通过准确的行数估计引导优化器选择更优连接路径，同时避免无谓的并行开销"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "修正CTE中lineitem聚合结果的行数估计偏差，强制将supplier作为嵌套循环内表并启用Memoize缓存，避免对大表的重复扫描，提升整体执行效率",
+    "core_optimization_points": [
+      "校正CTE revenue中lineitem聚合结果的行数估计偏差，实际输出10万行但优化器估计仅10万行，但后续连接中因未正确估计而引发错误计划，通过Rows Hint显式修正中间结果集规模",
+      "调整连接顺序，将supplier作为内表，使其在嵌套循环中被Memoize缓存，避免对大表supplier的重复全表扫描",
+      "强制supplier与revenue之间使用嵌套循环连接，并启用Memoize缓存，复用单个supplier的匹配结果，避免对supplier的多次全表扫描",
+      "禁用lineitem表的并行扫描，因其在CTE中已由Parallel Bitmap Heap Scan处理，避免并行资源冲突和额外开销"
+    ],
+    "hint_combination": "/*+ Rows(revenue *1.0) Leading( (revenue supplier) ) NestLoop(revenue supplier) Memoize(revenue supplier) NoParallel(lineitem) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自消除对supplier表的重复全表扫描（原计划中因revenue中10万行导致supplier被扫描10万次），通过Memoize缓存将内表访问从O(n)降至O(1)；同时避免并行扫描冲突，提升资源利用率。CTE结果集行数估计已合理，无需进一步调整。"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "修正CTE中lineitem聚合结果的行数估计偏差，强制以supplier为驱动表并使用哈希连接，消除嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正CTE中lineitem扫描后聚合结果的行数估计，避免优化器误判中间结果集规模",
+      "调整连接顺序为revenue→supplier，使小结果集（1行）作为外层驱动表，避免嵌套循环对supplier表的重复扫描",
+      "强制revenue与supplier之间使用HashJoin，替代低效的嵌套循环连接，提升大表连接效率",
+      "禁用supplier表的索引扫描，避免因索引回表导致的额外IO开销，改用主键索引直接定位"
+    ],
+    "hint_combination": "/*+ Rows(revenue *0.01) Leading( (revenue supplier) ) HashJoin(revenue supplier) NoIndexScan(supplier) */",
+    "expected_performance_benefit": "预计执行耗时降低75%以上，核心收益来自消除原计划中对supplier表的10万次嵌套循环扫描，将O(n²)复杂度优化为O(n)，同时通过Rows Hint校正CTE结果集估计偏差，使优化器正确选择高效连接路径"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "修正CTE中lineitem扫描结果集估计偏差，强制哈希连接替代嵌套循环，优化连接顺序并提升并行度，消除大表嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正CTE中lineitem扫描后中间结果集行数估计偏差，优化器低估实际行数近5倍，使用Rows Hint修正为真实规模",
+      "调整连接顺序，将小结果集的revenue作为驱动表，避免supplier表被重复扫描",
+      "强制revenue与supplier之间使用哈希连接，替代原低效嵌套循环，避免对supplier的单行扫描循环99999次",
+      "提升lineitem表并行扫描worker数量至8，充分利用大表扫描的并行潜力，加速初始数据过滤"
+    ],
+    "hint_combination": "/*+ Rows(revenue *5.0) Leading( (revenue supplier) ) HashJoin(revenue supplier) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自消除对supplier的99999次嵌套循环扫描（原耗时占比超95%），同时通过并行加速lineitem的shipdate范围扫描，结合准确的行数估计使优化器选择更优连接路径"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "修正CTE中lineitem聚合结果的行数估计偏差，强制将小结果集supplier作为驱动表，使用哈希连接替代嵌套循环，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正CTE revenue中lineitem聚合结果的行数估计，避免优化器误判中间结果集规模，导致后续连接路径错误",
+      "调整连接顺序为revenue→supplier，将仅1行的max revenue结果作为驱动表，避免嵌套循环对supplier表的重复扫描",
+      "强制revenue与supplier之间使用HashJoin，替代原低效的NestLoop，消除因驱动表行数误判导致的千万级循环开销",
+      "提升lineitem表的并行扫描worker数量至4，充分利用并行能力加速大表范围扫描",
+      "通过Rows Hint精准校正lineitem扫描后的中间结果集规模，使优化器正确评估连接代价"
+    ],
+    "hint_combination": "/*+ Rows(revenue *0.001) Leading( (revenue supplier) ) HashJoin(revenue supplier) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低70%-85%，核心收益来自：1）消除嵌套循环对supplier表的10万次重复扫描；2）通过精确行数校正避免错误连接路径；3）并行加速lineitem大范围扫描，使CTE构建时间从约3.5秒降至1秒以内"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "修正CTE中lineitem扫描结果集的严重行数估计偏差，强制使用哈希连接替代嵌套循环，提升连接效率并避免大表驱动导致的性能瓶颈",
+    "core_optimization_points": [
+      "校正CTE revenue中lineitem扫描后的中间结果集行数估计，实际输出10万行但优化器估计仅约10万（实际为10万，但计划中显示为101515，需校正连接后结果集），避免后续连接因估计偏差导致错误路径选择",
+      "强制将CTE revenue与supplier表之间的连接方式由嵌套循环改为哈希连接，避免因supplier表唯一索引驱动但实际内表行数大而引发的低效循环扫描",
+      "调整连接顺序，使CTE revenue作为驱动表，supplier作为被驱动表，符合小结果集驱动大表的最优连接策略",
+      "提升lineitem表的并行扫描worker数量，充分利用多核资源加速大表过滤与聚合"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.08) Leading( (revenue supplier) ) HashJoin(revenue supplier) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）通过Rows Hint校正lineitem在l_shipdate范围过滤后的实际行数（约45万，但优化器估计为233万），消除连接顺序与方法误判；2）强制哈希连接避免嵌套循环对supplier表的1次循环扫描但实际需匹配10万行的低效行为；3）提升并行度至8个worker，显著加速大表扫描与聚合过程"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "修正CTE中lineitem聚合结果的行数估计偏差，强制以supplier为驱动表并采用哈希连接，避免嵌套循环对大结果集的低效扫描",
+    "core_optimization_points": [
+      "校正CTE revenue中lineitem聚合后的行数估计偏差，因优化器低估了分组后结果集规模（实际10万行，估计仅10万行但后续连接中被误判为小结果集）",
+      "调整连接顺序为supplier→revenue，使小表supplier作为驱动表，避免大表revenue被重复扫描",
+      "强制supplier与revenue使用HashJoin，替代原嵌套循环连接，消除对revenue表的逐行匹配开销",
+      "禁用revenue表的嵌套循环连接行为，防止优化器误选低效路径",
+      "提升lineitem表的并行扫描worker数量至8，加速大表范围扫描"
+    ],
+    "hint_combination": "/*+ Rows(revenue *1.0) Leading( (supplier revenue) ) HashJoin(supplier revenue) NoNestLoop(supplier revenue) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%，核心收益来自消除嵌套循环对10万行revenue结果集的单行扫描开销（原耗时超4000ms），并行加速lineitem扫描，同时通过合理连接顺序与连接方法避免中间结果膨胀"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "修正CTE中lineitem聚合结果的行数估计偏差，强制以supplier为驱动表并使用哈希连接，消除嵌套循环对大结果集的低效遍历",
+    "core_optimization_points": [
+      "校正CTE中lineitem聚合后结果集的行数估计，修正优化器对10万行结果的严重低估（实际为10万行，但估计为10万行，此处重点校正其在后续连接中的中间结果规模）",
+      "强制连接顺序为revenue → supplier，将小结果集revenue作为驱动表，避免supplier大表被重复扫描",
+      "强制revenue与supplier之间使用HashJoin，替代原低效的嵌套循环连接（原计划中revenue有10万行，supplier仅1行匹配，嵌套循环需执行10万次索引扫描）",
+      "提升lineitem表的并行度至8，充分利用大表扫描的并行潜力，加速初始数据过滤"
+    ],
+    "hint_combination": "/*+ Rows(revenue *1.0) Leading( (revenue supplier) ) HashJoin(revenue supplier) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自将原嵌套循环的10万次索引扫描（每轮0.13ms，共1.3秒）替换为一次哈希连接（约0.1秒），同时并行扫描加速lineitem的初始过滤阶段，整体执行时间从4.1秒降至1.2秒以内"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "修正CTE中lineitem扫描结果的行数估计偏差，强制先聚合再连接，避免嵌套循环对大结果集的低效遍历，提升整体执行效率",
+    "core_optimization_points": [
+      "校正CTE中lineitem扫描后中间结果集的行数估计偏差，实际返回约49万行，远高于优化器估计的10万行，使用Rows Hint修正",
+      "强制将revenue CTE与supplier表之间的连接方式由嵌套循环改为哈希连接，避免因驱动表过大导致内表重复扫描",
+      "调整连接顺序，确保revenue作为驱动表（其结果集仅1行匹配最大值）先行，避免supplier全表扫描被重复执行",
+      "禁用supplier表的嵌套循环连接，强制使用索引扫描以提升连接效率"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *4.9) Leading( (revenue supplier) ) HashJoin(revenue supplier) NoNestLoop(revenue supplier) NoNestLoop(supplier) IndexScan(supplier) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自消除原计划中因错误估计导致的嵌套循环对10万行revenue的重复扫描（实际执行中revenue仅1行满足条件），并通过哈希连接高效完成大表匹配；同时强制索引扫描避免全表扫描，显著减少IO开销。"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "校正CTE中lineitem聚合结果集的行数估计偏差，强制使用哈希连接并优化连接顺序，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正CTE `revenue` 中的中间结果集行数估计偏差，避免优化器误判为10万行导致连接顺序错误",
+      "强制将 `supplier` 与 `revenue` 之间的连接方法改为哈希连接，替代低效的嵌套循环连接",
+      "调整连接顺序为 `revenue` 作为驱动表，`supplier` 作为内表，利用哈希连接优势提升连接效率",
+      "提升 `lineitem` 表的并行扫描度至4，充分利用多核资源加速大表过滤与聚合"
+    ],
+    "hint_combination": "/*+ Rows(revenue *0.01) Leading( (revenue supplier) ) HashJoin(revenue supplier) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）通过 `Rows(revenue *0.01)` 修正CTE结果集估计偏差，使优化器正确识别 `revenue` 仅1行有效数据；2）强制哈希连接避免对 `supplier` 表进行10万次嵌套循环扫描；3）提升 `lineitem` 并行度，加速其在 `1996-01-01` 至 `1996-04-01` 期间的扫描与聚合。整体执行路径从‘大表驱动小表嵌套循环’转变为‘小结果集驱动大表并行扫描’，性能质变。"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "修正CTE中lineitem聚合结果的行数估计偏差，强制以supplier为驱动表进行哈希连接，避免嵌套循环对大结果集的低效遍历",
+    "core_optimization_points": [
+      "校正CTE中lineitem扫描后聚合结果的行数估计，消除优化器对中间结果集规模的严重低估（实际10万行，估计仅10万行但实际为10万级，需修正连接后行数）",
+      "调整连接顺序为revenue→supplier，将小结果集revenue（仅1行）作为外层驱动表，避免嵌套循环对supplier的全表扫描",
+      "强制revenue与supplier使用哈希连接，替代低效的嵌套循环连接，避免对supplier的单行重复索引扫描",
+      "提升lineitem表并行度至8，加速大表范围扫描与聚合阶段的并行处理"
+    ],
+    "hint_combination": "/*+ Rows(revenue *0.01) Leading( (revenue supplier) ) HashJoin(revenue supplier) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自消除原计划中对supplier表的99999次重复索引扫描（NestLoop + Filter），并行加速lineitem扫描与聚合，同时通过Rows Hint修正CTE结果集估计偏差，使优化器正确选择哈希连接"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "修正CTE中lineitem扫描后中间结果集的严重估计偏差，强制使用哈希连接替代嵌套循环，优化连接顺序并提升并行度，消除性能瓶颈",
+    "core_optimization_points": [
+      "校正CTE中lineitem扫描后结果集的行数估计偏差：优化器估计101515行，实际为100000行，但连接阶段误判为508行，需通过Rows Hint修正中间结果集规模",
+      "强制将supplier与revenue的连接方式改为哈希连接，避免原计划中因驱动表行数估计失准导致的嵌套循环扫描，该路径在实际执行中耗时占比超98%",
+      "调整连接顺序为revenue→supplier，使小结果集（1行）作为驱动表，避免对supplier表进行重复扫描",
+      "提升lineitem表的并行扫描Worker数量至8，充分利用其5999万行的大表特性，加速初始数据过滤与聚合",
+      "禁用supplier表的索引扫描，因其主键索引扫描代价高于全表扫描，且连接键s_suppkey为唯一主键，索引扫描无优势"
+    ],
+    "hint_combination": "/*+ Rows(revenue *0.01) Leading( (revenue supplier) ) HashJoin(revenue supplier) Parallel(lineitem 8) NoIndexScan(supplier) */",
+    "expected_performance_benefit": "预计执行耗时从4111ms降至1200ms以内，降幅达70%以上。核心收益来自：1）消除嵌套循环对supplier的1次扫描被误认为10万次循环；2）通过Rows Hint修正CTE中间结果集估计，使优化器正确选择哈希连接；3）并行加速lineitem大表扫描，减少初始过滤时间；4）禁用低效索引扫描，降低CPU开销"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "修正CTE中lineitem聚合结果的行数估计偏差，强制将supplier作为嵌套循环内表并启用Memoize缓存，避免对大表supplier的重复扫描，提升连接效率",
+    "core_optimization_points": [
+      "校正CTE revenue中lineitem扫描后的中间结果集行数估计，实际输出10万行，但优化器估计仅10万行，虽无显著偏差，但需确保后续连接路径不被误判；通过Rows Hint显式确认结果集规模，增强计划稳定性",
+      "调整连接顺序，将小结果集revenue作为外层驱动表，supplier作为内表，避免原计划中supplier作为外层驱动表导致的重复扫描问题",
+      "强制使用嵌套循环连接（NestLoop）并启用Memoize缓存，使supplier表在每次revenue中唯一supplier_no匹配时仅扫描一次，避免重复索引扫描",
+      "禁用revenue与supplier之间的哈希连接，防止因revenue结果集虽大但唯一性高而引发不必要的哈希构建开销"
+    ],
+    "hint_combination": "/*+ Rows(revenue *1.0) Leading( (revenue supplier) ) NestLoop(revenue supplier) Memoize(revenue supplier) NoHashJoin(revenue supplier) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%，核心收益来自将原计划中对supplier表的10万次索引扫描（每行一次）优化为仅1次扫描并缓存结果；同时消除哈希连接的冗余开销，显著降低总IO与CPU消耗"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "修正CTE中lineitem聚合结果的行数估计偏差，强制将小结果集supplier作为驱动表，使用哈希连接替代嵌套循环，提升并行扫描效率，解决大表嵌套循环与排序瓶颈",
+    "core_optimization_points": [
+      "校正CTE revenue中lineitem扫描后中间结果的行数估计，避免优化器误判为10万行导致连接顺序错误",
+      "强制将supplier作为驱动表，通过Leading控制连接顺序，避免将大结果集revenue作为外层驱动表",
+      "强制revenue与supplier之间使用HashJoin，替代原低效的嵌套循环连接（因revenue实际仅1行匹配）",
+      "提升lineitem表并行度至8，充分利用大表扫描的并行潜力，加速初始数据过滤",
+      "通过Rows Hint修正CTE中lineitem聚合后结果集的估计偏差，使优化器正确识别revenue仅1行输出"
+    ],
+    "hint_combination": "/*+ Rows(lineitem *0.05) Leading( (supplier revenue) ) HashJoin(revenue supplier) Parallel(lineitem 8) */",
+    "expected_performance_benefit": "预计执行耗时降低75%以上，核心收益来自：1）消除对10万行revenue的嵌套循环扫描（原耗时4072ms）；2）通过哈希连接将连接代价从O(n×m)降至O(n+m)；3）提升lineitem并行扫描效率，加速初始过滤；4）修正估计偏差后优化器正确选择小表驱动路径"
+  }
+]

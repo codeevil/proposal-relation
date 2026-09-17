@@ -1,0 +1,278 @@
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "修正关键表行数估计偏差，调整连接顺序以控制中间结果膨胀，强制使用哈希连接替代嵌套循环，提升并行扫描效率，解决因统计信息失准导致的性能瓶颈",
+    "core_optimization_points": [
+      "校正`keyword`与`movie_keyword`连接后结果集估计偏差，实际行数为41,840，而优化器估计仅34行，偏差超1200倍，使用`Rows` Hint修正为实际规模",
+      "调整连接顺序为`keyword → movie_keyword → title → movie_companies → company_name → cast_info → name`，将高选择性过滤表置于最外层，避免早期中间结果膨胀",
+      "强制`movie_keyword`与`title`之间使用哈希连接，替代原嵌套循环，消除对`title`表的41,840次重复索引扫描开销",
+      "强制`movie_companies`与`company_name`之间使用哈希连接，避免因`company_name`过滤后仅1行却导致内层循环41,840次的低效行为",
+      "提升`movie_keyword`与`cast_info`表的并行度至4，加速大表扫描，充分利用I/O并行能力",
+      "禁用`name`表的嵌套循环扫描，强制使用`IndexOnlyScan`，避免回表开销，提升最终聚合效率"
+    ],
+    "hint_combination": "/*+ Rows(keyword movie_keyword *1230) Leading( (keyword movie_keyword title movie_companies company_name cast_info name) ) HashJoin(movie_keyword title) HashJoin(movie_companies company_name) Parallel(movie_keyword 4) Parallel(cast_info 4) NoNestLoop(movie_keyword title) NoNestLoop(movie_companies company_name) IndexOnlyScan(name) */",
+    "expected_performance_benefit": "预计执行耗时从9.35秒降至2.5秒以内，降幅达73%以上。核心收益来自：消除对`title`和`company_name`的千万级嵌套循环扫描，强制哈希连接降低连接开销；通过`Rows` Hint校正估计偏差，使优化器正确选择连接顺序；并行扫描加速大表处理；`IndexOnlyScan`减少最终回表开销。整体实现从‘全表扫描+嵌套循环’向‘高效索引+哈希连接+并行扫描’的性能跃迁。"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "校正关键表行数估计偏差，强制优化连接顺序与哈希连接，消除嵌套循环导致的千万级循环扫描瓶颈",
+    "core_optimization_points": [
+      "修正keyword表过滤后行数估计偏差，原估计1行但实际仅1行，无需校正，但需确保其作为驱动表尽早执行",
+      "校正movie_keyword表连接后结果集估计偏差：优化器估计34行，实际41840行，偏差超过1200倍，强制使用乘法系数校正",
+      "调整连接顺序为keyword→movie_keyword→title→movie_companies→company_name→cast_info→name，将最小结果集作为驱动表，避免中间结果过早膨胀",
+      "强制keyword与movie_keyword使用HashJoin，替代低效的嵌套循环连接，避免对title进行41840次重复索引扫描",
+      "强制movie_companies与title使用HashJoin，避免因movie_id索引扫描导致的重复访问",
+      "强制company_name与movie_companies使用HashJoin，提升连接效率",
+      "强制cast_info与movie_id连接使用IndexScan，避免全表扫描",
+      "提升title与movie_keyword的并行度，加速大表扫描"
+    ],
+    "hint_combination": "/*+ Rows(movie_keyword *1200) Leading( (k mk t mc cn ci n) ) HashJoin(k mk) HashJoin(mk t) HashJoin(t mc) HashJoin(mc cn) HashJoin(ci n) Parallel(t 4) Parallel(mk 4) */",
+    "expected_performance_benefit": "预计执行耗时降低75%-85%，核心收益来自消除嵌套循环对title表的41840次重复索引扫描（原耗时占总时间60%以上），通过强制哈希连接与合理连接顺序控制中间结果集增长，同时并行加速大表扫描，整体执行路径由O(n²)退化为O(n log n)级别"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "修正关键表行数估计偏差，调整连接顺序以控制中间结果膨胀，强制哈希连接替代嵌套循环，提升并行扫描效率，解决性能瓶颈",
+    "core_optimization_points": [
+      "校正`keyword`表过滤后行数估计偏差：优化器估计仅1行，实际仅1行，但`movie_keyword`连接结果被严重低估（估计34行，实际41840行），通过`Rows` Hint修正中间结果集规模，避免后续连接树错误膨胀",
+      "调整连接顺序为`keyword → movie_keyword → title → movie_companies → company_name → cast_info → name`，将高选择性过滤表`keyword`作为驱动起点，避免早期连接产生大中间结果",
+      "强制`keyword`与`movie_keyword`使用哈希连接，替代原嵌套循环（NestLoop），因`movie_keyword`表大（452万行），且`keyword_id`索引已覆盖，哈希连接更高效",
+      "强制`title`与`movie_companies`使用哈希连接，因`movie_id`连接键无唯一性，且`movie_companies`表大（260万行），嵌套循环在4万次循环中重复扫描导致性能灾难",
+      "提升`movie_keyword`和`movie_companies`表并行度至4，加速大表扫描，提升整体并行效率",
+      "启用`name`表仅索引扫描，因其`id`为主键，且查询仅需`name`列，覆盖索引无需回表"
+    ],
+    "hint_combination": "/*+ Rows(movie_keyword *1230) Leading( (k mk t mc cn ci n) ) HashJoin(k mk) HashJoin(t mc) HashJoin(mc cn) HashJoin(ci n) Parallel(movie_keyword 4) Parallel(movie_companies 4) IndexOnlyScan(name name_pkey) */",
+    "expected_performance_benefit": "预计执行耗时从9350ms降至2500ms以内，降幅达73%以上。核心收益来自：1）修正`movie_keyword`连接结果集估计偏差，消除嵌套循环对`title`和`movie_companies`的4万次重复扫描；2）强制哈希连接替代嵌套循环，降低IO与CPU开销；3）提升大表并行度，充分利用多核资源；4）使用仅索引扫描避免`name`表回表，减少随机IO"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "校正关键字过滤后中间结果集严重低估问题，强制优化连接顺序与哈希连接，消除嵌套循环的指数级膨胀瓶颈",
+    "core_optimization_points": [
+      "修正keyword表过滤后实际行数与优化器估计偏差：实际仅1行匹配，但优化器估计为1行，实际执行中mk表被扫描41840次，需校正中间结果集规模",
+      "调整连接顺序为：keyword → movie_keyword → title → movie_companies → company_name → cast_info → name，确保小结果集驱动大表连接，避免早期中间结果膨胀",
+      "强制movie_keyword与title之间使用HashJoin，替代低效的嵌套循环连接，避免因title表被重复扫描41840次导致的性能灾难",
+      "强制cast_info与name之间使用IndexOnlyScan，避免回表开销，因name表仅需id列且有主键索引",
+      "提升movie_keyword与title的并行度至4，加速大表扫描"
+    ],
+    "hint_combination": "/*+ Rows(keyword movie_keyword *0.1) Leading( (keyword movie_keyword title movie_companies company_name cast_info name) ) HashJoin(movie_keyword title) HashJoin(movie_companies company_name) HashJoin(cast_info name) Parallel(movie_keyword 4) Parallel(title 4) IndexOnlyScan(name name_pkey) */",
+    "expected_performance_benefit": "预计执行耗时从9350ms降至2000ms以内，降幅超过78%。核心收益来自消除嵌套循环对title表的41840次重复扫描，强制哈希连接减少IO与CPU开销，同时并行加速大表扫描，IndexOnlyScan避免回表。校正Rows Hint使优化器正确估计中间结果集规模，防止错误连接顺序决策。"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "校正关键词过滤后中间结果集的严重估计偏差，重构连接顺序并强制哈希连接，消除嵌套循环的指数级膨胀问题",
+    "core_optimization_points": [
+      "修正`keyword`表过滤后`movie_keyword`连接结果的行数估计偏差，避免优化器误判为仅34行，实际为41840行",
+      "将`keyword`与`movie_keyword`作为最内层连接组，优先执行高选择性过滤，尽早缩小数据集",
+      "重构连接顺序为：(keyword → movie_keyword) → (title → movie_companies → company_name) → (cast_info → name)，使小结果集驱动大表连接",
+      "强制`movie_keyword`与`title`之间使用哈希连接，替代低效的嵌套循环，避免对`title`表进行41840次重复扫描",
+      "强制`movie_companies`与`company_name`使用索引扫描，避免因`cn.country_code`过滤导致的全表扫描开销"
+    ],
+    "hint_combination": "/*+ Rows(keyword movie_keyword *1200) Leading( ((keyword movie_keyword) (title movie_companies company_name) (cast_info name)) ) HashJoin(movie_keyword title) HashJoin(movie_companies company_name) IndexScan(company_name) */",
+    "expected_performance_benefit": "预计执行耗时从9350ms降至1800ms以内，降幅超过80%。核心收益来自：1）消除`title`表被重复扫描41840次的性能黑洞；2）通过哈希连接将`movie_keyword`与`title`连接从O(n²)降为O(n)；3）修正估计偏差后，优化器将选择更合理的连接顺序，避免中间结果集过早膨胀。"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "修正关键字过滤后中间结果集严重低估问题，强制最优连接顺序与哈希连接，消除嵌套循环的指数级性能瓶颈",
+    "core_optimization_points": [
+      "校正`keyword`表过滤后`movie_keyword`连接结果的行数估计偏差，实际行数为41840，远超优化器估计的34行，使用`Rows` Hint强制修正",
+      "调整连接顺序为`keyword → movie_keyword → title → movie_companies → company_name → cast_info → name`，将最小结果集的`keyword`作为驱动表，避免早期中间结果膨胀",
+      "强制`keyword`与`movie_keyword`使用`HashJoin`，替代原低效的`NestLoop`，避免因`movie_keyword`表大而被循环扫描41840次",
+      "强制`movie_companies`与`title`使用`HashJoin`，避免因`movie_id`无索引且结果集大导致嵌套循环开销过高",
+      "提升`movie_keyword`和`title`表的并行度至4，加速大表扫描，提升整体吞吐能力"
+    ],
+    "hint_combination": "/*+ Rows(movie_keyword *1230.588) Leading( (k mk t mc cn ci n) ) HashJoin(k mk) HashJoin(mc t) HashJoin(ci n) Parallel(movie_keyword 4) Parallel(title 4) */",
+    "expected_performance_benefit": "预计执行耗时从9350ms降至2500ms以内（降幅73%以上），核心收益来自消除`NestLoop`在`movie_keyword`上执行41840次的指数级循环，通过`HashJoin`将连接代价从O(n²)降至O(n)，并行扫描加速大表IO，同时`Rows` Hint校正估计偏差，使优化器正确选择高效路径"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "修正关键词与电影关键词连接后的严重行数估计偏差，强制以小结果集驱动连接并采用哈希连接，消除嵌套循环的指数级性能瓶颈",
+    "core_optimization_points": [
+      "校正`keyword`与`movie_keyword`连接后的行数估计偏差：优化器估计仅34行，实际输出41840行，偏差超过1200倍，使用`Rows` Hint修正为实际规模的合理倍数",
+      "调整连接顺序，将高选择性过滤表`keyword`置于最外层驱动位置，避免早期连接产生超大中间结果集",
+      "强制`keyword`与`movie_keyword`使用`HashJoin`，替代低效的嵌套循环连接，避免对`movie_keyword`进行41840次重复扫描",
+      "提升`movie_keyword`和`title`的并行度，加速大表扫描，充分利用系统并行资源",
+      "利用`Index Only Scan`优势，确保`title`与`movie_companies`等连接路径无需回表，减少IO开销"
+    ],
+    "hint_combination": "/*+ Rows(keyword movie_keyword *1200) Leading( (keyword movie_keyword mk t mc cn ci n) ) HashJoin(keyword movie_keyword) HashJoin(movie_keyword mk) HashJoin(mk t) HashJoin(t mc) HashJoin(mc cn) HashJoin(cn ci) HashJoin(ci n) Parallel(movie_keyword 4) Parallel(title 4) Parallel(movie_companies 4) */",
+    "expected_performance_benefit": "预计执行耗时从9350ms降至1500ms以内（降幅84%以上），核心收益来自消除`movie_keyword`表被嵌套循环扫描41840次的灾难性开销，同时通过哈希连接与并行扫描显著提升大表处理效率。行数估计修正使优化器正确选择哈希连接路径，避免低效嵌套循环的指数级膨胀。"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "修正关键表行数估计偏差，调整连接顺序以控制中间结果膨胀，强制使用哈希连接替代嵌套循环，显著降低整体执行耗时",
+    "core_optimization_points": [
+      "校正`keyword`与`movie_keyword`连接后的结果集估计偏差，实际返回41840行，远超优化器估计的34行，使用`Rows` Hint修正为合理值",
+      "调整连接顺序为`keyword → movie_keyword → title → movie_companies → company_name → cast_info → name`，将最小结果集的`keyword`作为驱动表，避免早期连接产生超大中间结果",
+      "强制`movie_keyword`与`title`之间使用哈希连接，替代低效的嵌套循环，避免`title`被重复扫描41840次",
+      "强制`movie_companies`与`company_name`使用嵌套循环，因`company_name`仅返回0行，且`company_id`有索引，小表驱动合理",
+      "提升`movie_keyword`和`cast_info`的并行度至4，加速大表扫描过程",
+      "禁止`company_name`使用顺序扫描，强制其通过主键索引访问，避免无效全表扫描"
+    ],
+    "hint_combination": "/*+ Rows(movie_keyword mk *1200) Leading( (k mk t mc cn ci n) ) HashJoin(mk t) NestLoop(mc cn) NoSeqScan(cn) Parallel(mk 4) Parallel(ci 4) */",
+    "expected_performance_benefit": "预计执行耗时从9350ms降至2500ms以内（降幅73%以上），核心收益来自：消除`title`表被41840次重复扫描的嵌套循环性能瓶颈，通过哈希连接加速大表连接，提升并行度并修正估计偏差，使优化器选择更优路径"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "修正关键表行数估计偏差，强制以高选择性过滤表为驱动表，优化连接顺序并启用哈希连接，消除嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正`keyword`表过滤后结果集估计偏差，因实际仅1行匹配，但优化器估计为1行（实际正确），但后续`movie_keyword`连接结果被严重低估，需修正连接后行数",
+      "将`keyword`作为连接树最外层驱动表，尽早过滤出符合条件的`movie_id`集合，控制中间结果集规模",
+      "强制`keyword`与`movie_keyword`使用哈希连接，替代原嵌套循环，避免对`movie_keyword`进行41840次重复扫描",
+      "强制`movie_keyword`与`title`使用哈希连接，避免因`title`表虽小但被扫描41840次导致的重复回表开销",
+      "强制`movie_companies`与`company_name`使用哈希连接，避免因`company_name`过滤后仅0行但被扫描148552次的冗余开销",
+      "提升`movie_keyword`和`cast_info`表并行度至4，加速大表扫描",
+      "禁用`name`表的顺序扫描，强制使用`name_pkey`索引扫描，避免全表扫描"
+    ],
+    "hint_combination": "/*+ Rows(movie_keyword mk *0.1) Leading( (k mk t mc cn ci n) ) HashJoin(k mk) HashJoin(mk t) HashJoin(mc cn) HashJoin(ci n) Parallel(movie_keyword 4) Parallel(cast_info 4) NoSeqScan(name) */",
+    "expected_performance_benefit": "预计执行耗时降低75%以上，核心收益来自：1）消除`movie_keyword`与`title`、`movie_companies`与`company_name`之间的嵌套循环扫描；2）通过`Rows` Hint修正中间结果集估计偏差，使优化器正确选择哈希连接；3）提升大表并行度，加速扫描；4）避免对`name`表的全表扫描，减少IO开销"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "校正关键表行数估计偏差，优化连接顺序以控制中间结果膨胀，强制哈希连接替代低效嵌套循环，提升整体执行性能",
+    "core_optimization_points": [
+      "校正`keyword`表过滤后行数估计偏差：实际仅1行匹配，但优化器估计为1行（准确），但`movie_keyword`连接后行数严重低估，需通过`Rows` Hint修正中间结果集规模",
+      "调整连接顺序，优先执行高选择性过滤（keyword → movie_keyword），避免早期连接产生大中间结果集",
+      "强制`movie_keyword`与`title`、`movie_companies`之间使用哈希连接，替代嵌套循环，避免对`movie_keyword`结果集的千万级循环扫描",
+      "强制`name`表使用`IndexOnlyScan`，因`name_pkey`为唯一索引且查询仅需`id`与`name`，可完全覆盖无需回表",
+      "提升`movie_keyword`和`cast_info`表并行度，加速大表扫描阶段"
+    ],
+    "hint_combination": "/*+ Rows(movie_keyword mk *0.1) Leading( (k mk t mc cn ci n) ) HashJoin(mk t) HashJoin(mk mc) HashJoin(ci n) IndexOnlyScan(name name_pkey) Parallel(movie_keyword 4) Parallel(cast_info 4) */",
+    "expected_performance_benefit": "预计执行耗时降低70%-85%。核心收益来自：1）消除对`movie_keyword`结果集（41,840行）的嵌套循环扫描（原执行283万次）；2）通过`Rows` Hint校正中间结果集估计偏差，避免优化器误判连接代价；3）并行加速大表扫描，结合`IndexOnlyScan`减少回表开销，整体执行路径从左深嵌套循环树转为高效哈希连接树，显著降低IO与CPU开销"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "修正关键词与电影关联结果集的严重估计偏差，强制以小结果集为驱动表并采用哈希连接，消除嵌套循环的指数级开销",
+    "core_optimization_points": [
+      "校正`keyword`与`movie_keyword`连接后结果集的严重低估：优化器估计仅34行，实际为41,840行，偏差超过1200倍，使用`Rows` Hint修正估计值",
+      "调整连接顺序为`keyword → movie_keyword → title → movie_companies → company_name → cast_info → name`，将最小结果集（keyword）作为驱动表，避免早期中间结果膨胀",
+      "强制`keyword`与`movie_keyword`使用哈希连接，替代低效的嵌套循环，解决因`movie_keyword`表大且无索引支持而引发的全表扫描瓶颈",
+      "强制`movie_companies`与`company_name`使用索引扫描，避免因`country_code`过滤导致的全表扫描，提升过滤效率",
+      "提升`movie_keyword`和`cast_info`的并行度至4，加速大表扫描过程，充分利用多核资源"
+    ],
+    "hint_combination": "/*+ Rows(movie_keyword *1230.5) Leading( (k mk t mc cn ci n) ) HashJoin(k mk) HashJoin(mk t) HashJoin(t mc) HashJoin(mc cn) HashJoin(ci n) Parallel(movie_keyword 4) Parallel(cast_info 4) */",
+    "expected_performance_benefit": "预计执行耗时从9350ms降至2000ms以内（降幅78%以上），核心收益来自：1）消除`movie_keyword`与`keyword`连接的嵌套循环性能黑洞；2）修正中间结果集估计偏差，使优化器选择合理路径；3）并行加速大表扫描，显著缩短IO时间"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "修正关键表行数估计偏差，强制最优连接顺序与哈希连接，消除嵌套循环的指数级性能瓶颈",
+    "core_optimization_points": [
+      "校正keyword与movie_keyword连接后结果集估计偏差，实际行数41840远超估计值34，使用Rows Hint修正为真实规模",
+      "调整连接顺序为keyword→movie_keyword→title→movie_companies→company_name→cast_info→name，将最小结果集keyword作为驱动表，避免早期中间结果膨胀",
+      "强制movie_keyword与title之间使用HashJoin，替代低效的Nested Loop，避免对title表进行41840次单行索引扫描",
+      "强制movie_companies与company_name之间使用HashJoin，避免因company_name过滤失败导致的41840次无效索引扫描",
+      "提升cast_info与name表扫描的并行度，加速大表连接过程中的回表与聚合操作",
+      "禁用company_name的顺序扫描，强制使用主键索引扫描，提升过滤效率"
+    ],
+    "hint_combination": "/*+ Rows(keyword movie_keyword *1230.588) Leading( (k mk t mc cn ci n) ) HashJoin(mk t) HashJoin(mc cn) NoSeqScan(cn) Parallel(ci 4) Parallel(n 4) */",
+    "expected_performance_benefit": "预计执行耗时从9350ms降至2500ms以内，降幅超过73%。核心收益来自：1）消除对title表的41840次重复索引扫描；2）避免对company_name的无效循环访问；3）通过哈希连接将大表连接从O(n²)降至O(n)；4）并行加速大表回表与聚合操作。校正行数估计偏差是关键前提，否则优化器仍会误判连接代价。"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "通过校正关键表行数估计偏差、优化连接顺序并强制使用哈希连接，消除嵌套循环导致的千万级循环扫描瓶颈，显著降低执行耗时",
+    "core_optimization_points": [
+      "校正`keyword`表过滤后结果集的行数估计偏差，实际仅1行但优化器估计为1，修正为*1.0（实际匹配行数=1）",
+      "校正`movie_keyword`表连接后结果集的行数估计偏差，实际输出41840行，但优化器估计仅34行，修正为*1230.6（41840 / 34 ≈ 1230.6）",
+      "校正`movie_companies`表连接后结果集的行数估计偏差，实际输出41840×4=167360行，但优化器估计仅34行，修正为*4922.3（167360 / 34 ≈ 4922.3）",
+      "调整连接顺序为`keyword → movie_keyword → title → movie_companies → company_name → cast_info → name`，将最小结果集`keyword`作为驱动表，避免早期中间结果膨胀",
+      "强制`keyword`与`movie_keyword`使用哈希连接，替代原嵌套循环，避免对`movie_keyword`表的41840次重复扫描",
+      "强制`title`与`movie_companies`使用哈希连接，避免因`movie_companies`无合适索引导致的嵌套循环低效",
+      "强制`cast_info`与`name`使用索引扫描，确保仅通过`name_pkey`高效回表，避免全表扫描"
+    ],
+    "hint_combination": "/*+ Rows(keyword movie_keyword *1.0) Rows(movie_keyword title *1230.6) Rows(movie_keyword movie_companies *4922.3) Leading( (keyword movie_keyword title movie_companies company_name cast_info name) ) HashJoin(keyword movie_keyword) HashJoin(title movie_companies) IndexScan(name name_pkey) */",
+    "expected_performance_benefit": "预计执行耗时从9350ms降低至1500ms以内，降幅超过84%。核心收益来自：1）消除`movie_keyword`表的41840次嵌套循环扫描；2）避免`movie_companies`和`title`之间因无索引导致的低效嵌套循环；3）通过哈希连接将大表连接代价从O(n²)降至O(n)；4）修正估计偏差后，优化器可正确选择高效路径，避免错误执行计划"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "通过校正关键表行数估计偏差、重构连接顺序为小结果集驱动、强制哈希连接替代嵌套循环，并启用并行扫描，彻底消除性能瓶颈",
+    "core_optimization_points": [
+      "校正`keyword`表与`movie_keyword`连接后中间结果集的严重低估问题，修正优化器对匹配行数的误判",
+      "将`keyword`表作为最外层驱动表，优先过滤出唯一匹配行，控制后续连接规模",
+      "强制`keyword`与`movie_keyword`使用哈希连接，避免嵌套循环在41840次循环中反复扫描大表",
+      "将`movie_companies`与`company_name`的连接改为先通过`company_name`的主键索引快速过滤，再与`movie_companies`连接",
+      "启用`movie_keyword`和`cast_info`的并行扫描，加速大表数据读取",
+      "通过`Rows` Hint修正`movie_keyword`与`title`连接后中间结果的估计偏差，防止优化器错误选择低效路径"
+    ],
+    "hint_combination": "/*+ Rows(keyword movie_keyword *0.001) Leading( (k mk t mc cn ci n) ) HashJoin(k mk) HashJoin(mk t) HashJoin(mc cn) HashJoin(ci n) Parallel(movie_keyword 4) Parallel(cast_info 4) */",
+    "expected_performance_benefit": "预计执行耗时从9350ms降至1500ms以内，降幅达84%以上。核心收益来自：消除嵌套循环对`movie_keyword`的41840次重复扫描；通过哈希连接将大表连接效率提升至线性级别；并行扫描加速大表读取；行数估计校正使优化器正确选择低代价路径。"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "校正关键词过滤后中间结果集的严重低估，强制哈希连接以避免嵌套循环的指数级膨胀，优化连接顺序并提升并行度，显著降低整体执行耗时",
+    "core_optimization_points": [
+      "校正keyword与movie_keyword连接后的实际行数估计偏差，优化器低估41840行仅为1行，需乘以修正系数41840，避免后续连接循环爆炸",
+      "调整连接顺序为keyword→movie_keyword→title→movie_companies→company_name→cast_info→name，将高选择性过滤表作为驱动起点，控制中间结果集增长",
+      "强制movie_keyword与title之间使用哈希连接，替代原嵌套循环，避免对title表重复扫描41840次",
+      "强制movie_companies与company_name之间使用哈希连接，避免对company_name进行41840次无意义的索引扫描",
+      "提升movie_keyword和cast_info表的并行度至4，加速大表扫描阶段的IO瓶颈",
+      "启用index only scan对title表，避免回表开销，提升扫描效率"
+    ],
+    "hint_combination": "/*+ Rows(keyword movie_keyword *41840) Leading( (keyword movie_keyword title movie_companies company_name cast_info name) ) HashJoin(movie_keyword title) HashJoin(movie_companies company_name) IndexOnlyScan(title) Parallel(movie_keyword 4) Parallel(cast_info 4) */",
+    "expected_performance_benefit": "预计执行耗时从9350ms降至2500ms以内（降幅73%以上），核心收益来自消除嵌套循环对title和company_name的千万级重复扫描，通过哈希连接将O(n²)操作降为O(n)，并行加速大表扫描，同时利用仅索引扫描减少IO开销。"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "校正关键字与电影关键词连接后的结果集估计偏差，强制以小表驱动大表并采用哈希连接，消除嵌套循环的指数级性能瓶颈",
+    "core_optimization_points": [
+      "识别并修正`keyword`与`movie_keyword`连接后结果集的严重估计偏差（实际41840行，估计仅34行），通过Rows Hint校正为真实规模",
+      "调整连接顺序，将高选择性过滤的`keyword`作为最外层驱动表，避免早期连接产生大中间结果",
+      "强制`movie_keyword`与`title`之间使用哈希连接，替代低效的嵌套循环+索引扫描路径，降低IO与CPU开销",
+      "提升`movie_keyword`表并行度至4，加速大表扫描与位图构建过程",
+      "利用`name`表的主键索引实现仅索引扫描，避免回表开销"
+    ],
+    "hint_combination": "/*+ Rows(k mk *1230.5) Leading( (k mk t mc cn ci n) ) HashJoin(mk t) HashJoin(mk t mc) HashJoin(mk t mc cn) HashJoin(mk t mc cn ci) Parallel(movie_keyword 4) IndexOnlyScan(name name_pkey) */",
+    "expected_performance_benefit": "预计执行耗时从9350ms降至2500ms以内，降幅达73%以上。核心收益来自：1）校正`keyword`→`movie_keyword`连接的1230倍行数估计偏差，避免后续嵌套循环被错误展开；2）将原本对41840次循环的嵌套循环替换为一次哈希连接，消除O(n²)开销；3）并行加速大表扫描，提升整体吞吐。"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "校正关键表行数估计偏差，重构连接顺序以控制中间结果膨胀，强制使用哈希连接替代嵌套循环，显著降低整体执行耗时",
+    "core_optimization_points": [
+      "修正keyword表过滤后结果集估计偏差：实际仅1行匹配，但优化器估计为1行（合理），但后续mk表连接因未校正导致中间结果膨胀；通过Rows Hint校正mk表连接结果集规模，避免后续嵌套循环重复扫描",
+      "调整连接顺序为：keyword → movie_keyword → title → movie_companies → company_name → cast_info → name，将最小结果集驱动表（keyword）置于最外层，避免早期连接产生超大中间结果",
+      "强制movie_keyword与title之间使用哈希连接，替代原嵌套循环，避免因title表唯一索引扫描被重复调用41840次导致的性能灾难",
+      "强制cast_info与name之间使用索引扫描，避免因name表未命中索引导致的回表开销；同时禁用seqscan以强制走索引路径",
+      "提升movie_keyword与title的并行度至4，加速大表扫描，提升整体吞吐"
+    ],
+    "hint_combination": "/*+ Rows(movie_keyword mk *0.1) Leading( (k mk t mc cn ci n) ) HashJoin(mk t) HashJoin(mk t mc) HashJoin(mk t mc cn) HashJoin(mk t mc cn ci) HashJoin(mk t mc cn ci n) IndexScan(ci movie_id_cast_info) IndexScan(n name_pkey) NoSeqScan(n) Parallel(mk 4) Parallel(t 4) */",
+    "expected_performance_benefit": "预计执行耗时从9350ms降至2500ms以内，降幅达73%以上。核心收益来自：1）消除嵌套循环对title表的41840次重复扫描；2）避免cast_info与name表的回表开销；3）通过哈希连接与并行扫描加速大表处理；4）校正估计偏差使优化器选择更合理路径"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "校正关键词过滤后中间结果集的严重低估，强制哈希连接以避免嵌套循环的指数级膨胀，优化连接顺序并提升并行度，解决执行瓶颈",
+    "core_optimization_points": [
+      "校正keyword与movie_keyword连接后的行数估计偏差：优化器估计仅34行，实际为41,840行，偏差超过1200倍，使用Rows Hint修正为真实规模",
+      "调整连接顺序，将最小结果集的keyword作为驱动表，避免早期连接产生超大中间结果",
+      "强制movie_keyword与title之间使用哈希连接，替代低效的嵌套循环，防止对title表进行41,840次重复扫描",
+      "提升movie_keyword与title的并行度至4，加速大表扫描与哈希构建",
+      "强制name表使用IndexOnlyScan，避免对name表的回表开销，利用其主键索引覆盖查询需求"
+    ],
+    "hint_combination": "/*+ Rows(k mk *1230) Leading( (k mk t mc cn ci n) ) HashJoin(mk t) Parallel(movie_keyword 4) Parallel(title 4) IndexOnlyScan(name) */",
+    "expected_performance_benefit": "预计执行耗时从9.35秒降至1.5~2.5秒，降幅达75%以上。核心收益来自消除嵌套循环对title的4万次重复扫描，通过哈希连接将连接代价从O(n×m)降至O(n+m)，并行扫描加速大表读取，同时仅索引扫描避免回表开销。"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "修正关键表行数估计偏差，强制最优连接顺序与哈希连接，消除嵌套循环的指数级膨胀瓶颈，提升并行度加速大表扫描",
+    "core_optimization_points": [
+      "校正`keyword`表过滤后结果集估计偏差：实际仅1行匹配，但优化器估计为1行（准确），但`movie_keyword`连接后行数严重低估，需通过`Rows`Hint修正中间结果集规模",
+      "调整连接顺序为`keyword → movie_keyword → title → movie_companies → company_name → cast_info → name`，将最小结果集`keyword`作为驱动表，避免早期连接产生超大中间结果",
+      "强制`keyword`与`movie_keyword`使用哈希连接，替代原嵌套循环，避免因`movie_keyword`被扫描41840次导致的性能灾难",
+      "强制`movie_keyword`与`title`使用哈希连接，避免`title`被重复扫描41840次，且`title`为小表，适合哈希连接",
+      "强制`movie_companies`与`company_name`使用哈希连接，避免因`company_name`过滤失败导致内层循环无意义重复",
+      "提升`movie_keyword`与`cast_info`表的并行度至4，加速大表扫描",
+      "强制`name`表使用`IndexOnlyScan`，因其查询列`name`在`name_pkey`中已覆盖，无需回表"
+    ],
+    "hint_combination": "/*+ Rows(movie_keyword mk *1.0) Leading( (k mk t mc cn ci n) ) HashJoin(k mk) HashJoin(mk t) HashJoin(mc cn) HashJoin(ci n) Parallel(movie_keyword 4) Parallel(cast_info 4) IndexOnlyScan(name name_pkey) */",
+    "expected_performance_benefit": "预计执行耗时从9350ms降至1500ms以内，降幅达84%以上。核心收益来自：消除嵌套循环对`movie_keyword`和`title`的千万级重复扫描，通过哈希连接将连接代价从O(n²)降至O(n)，并行加速大表扫描，同时`IndexOnlyScan`避免`name`表回表开销。统计信息偏差虽存在，但通过`Rows`Hint与连接顺序优化已实现全局最优路径。"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "修正关键词与电影关键词连接后的严重行数估计偏差，强制以小表驱动大表连接，避免嵌套循环的指数级膨胀，提升整体执行效率",
+    "core_optimization_points": [
+      "校正keyword与movie_keyword连接后的行数估计偏差：优化器估计仅34行，实际输出41840行，偏差超过1200倍，需通过Rows Hint修正",
+      "调整连接顺序为：keyword → movie_keyword → title → movie_companies → company_name → cast_info → name，将过滤后结果最小的keyword作为驱动表，控制中间结果集增长",
+      "强制keyword与movie_keyword使用BitmapScan，利用位图扫描高效合并索引条件，避免全表扫描与重复回表",
+      "强制title与movie_companies使用Index Only Scan，因title_pkey与movie_id_movie_companies均为覆盖索引，无需回表",
+      "强制cast_info与name使用Index Scan，因person_id与id均有索引，且无覆盖索引可选",
+      "提升movie_keyword与company_name表的并行度至4，加速大表扫描，充分利用多核资源"
+    ],
+    "hint_combination": "/*+ Rows(keyword movie_keyword *1200) Leading( (keyword movie_keyword title movie_companies company_name cast_info name) ) BitmapScan(movie_keyword keyword_id_movie_keyword) IndexOnlyScan(title title_pkey) IndexOnlyScan(movie_companies movie_id_movie_companies) IndexScan(cast_info movie_id_cast_info) IndexScan(name name_pkey) Parallel(movie_keyword 4) Parallel(company_name 4) */",
+    "expected_performance_benefit": "预计执行耗时从9350ms降至2500ms以内，降幅达73%以上。核心收益来自消除嵌套循环中因行数估计严重失准导致的280万次无效循环扫描，同时通过位图扫描与索引仅扫描减少随机IO，提升并行度加速大表处理"
+  }
+]

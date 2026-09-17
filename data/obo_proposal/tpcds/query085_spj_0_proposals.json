@@ -1,0 +1,282 @@
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "通过校正关键表行数估计偏差、强制哈希连接并优化连接顺序，消除嵌套循环导致的中间结果膨胀问题，显著降低整体执行耗时",
+    "core_optimization_points": [
+      "校正`web_returns`与`customer_address`连接后的中间结果集行数估计偏差，实际行数远低于优化器估计值，使用`Rows` Hint修正为合理规模",
+      "调整连接顺序，将高选择性过滤的`customer_demographics`与`reason`先行聚合，避免早期生成大中间结果",
+      "强制`web_returns`与`customer_address`使用哈希连接，替代低效的嵌套循环连接，解决大表驱动小表的性能瓶颈",
+      "强制`web_sales`使用索引仅扫描（IndexOnlyScan），利用其`ws_sold_date_sk`与`ws_item_sk`组合索引覆盖所需字段，避免回表开销",
+      "提升`web_returns`与`customer_address`的并行度至4，加速大表扫描与哈希构建过程"
+    ],
+    "hint_combination": "/*+ Rows(web_returns customer_address *0.05) Leading( (cd1 (web_returns (customer_address reason))) (cd2 web_sales) (web_page date_dim) ) HashJoin(web_returns customer_address) HashJoin(web_returns customer_address reason) IndexOnlyScan(web_sales _dta_index_web_sales_6_1269579561__k1_k4_k5_18) Parallel(web_returns 4) Parallel(customer_address 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正`web_returns`与`customer_address`连接后行数估计偏差（原估计191行，实际可能不足10行），避免嵌套循环对大表的无效扫描；2）强制哈希连接替代嵌套循环，消除O(n²)复杂度开销；3）`web_sales`使用仅索引扫描，减少回表IO；4）并行扫描加速大表数据读取，尤其在多核环境下收益显著。整体执行计划将从原‘嵌套循环+多层并行’结构，重构为‘高选择性过滤→哈希连接→仅索引扫描’的高效路径。"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "通过校正多表连接结果集估计偏差、强制最优连接顺序与哈希连接、提升关键表并行度，消除嵌套循环性能瓶颈，显著降低整体执行耗时",
+    "core_optimization_points": [
+      "校正web_returns与customer_demographics连接后的中间结果集估计偏差，原估计行数为7005，实际执行仅191行，修正系数为0.027（191/7005），防止优化器误判为大结果集导致错误连接方法选择",
+      "调整连接顺序为：web_returns → customer_demographics（cd1）→ customer_address → reason → customer_demographics（cd2）→ web_sales → web_page → date_dim，将小结果集驱动表前置，避免早期中间结果膨胀",
+      "强制web_returns与customer_demographics（cd1）之间使用哈希连接，替代低效的嵌套循环连接，避免因cd1过滤后行数少但被误认为大表而引发嵌套循环循环扫描",
+      "强制web_returns与customer_address之间使用哈希连接，消除因ca_state多值过滤导致的嵌套循环性能退化",
+      "提升web_returns、customer_demographics（cd1）、customer_address三表的并行扫描并行度至4，加速大表扫描阶段的IO吞吐",
+      "强制web_sales使用索引仅扫描（IndexOnlyScan），因其ws_item_sk + ws_order_number为主键，且查询列均在索引中，避免回表开销"
+    ],
+    "hint_combination": "/*+ Rows(web_returns customer_demographics cd1 *0.027) Leading( (web_returns (customer_demographics cd1) (customer_address) (reason) (customer_demographics cd2) (web_sales) (web_page) (date_dim)) ) HashJoin(web_returns customer_demographics cd1) HashJoin(web_returns customer_address) IndexOnlyScan(web_sales _dta_index_web_sales_6_1269579561__k1_k4_k5_18) Parallel(web_returns 4) Parallel(customer_demographics cd1 4) Parallel(customer_address 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环对web_returns与cd1的千万级循环扫描；2）通过哈希连接替代嵌套循环，将连接代价从O(n×m)降至O(n+m)；3）并行扫描加速大表扫描阶段；4）IndexOnlyScan避免回表，减少随机IO；5）Rows Hint校正估计偏差，使优化器选择正确连接路径"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "通过校正中间结果集行数估计偏差、强制哈希连接并优化连接顺序，消除嵌套循环性能瓶颈，显著降低大表连接开销",
+    "core_optimization_points": [
+      "校正`web_returns`与`customer_demographics`连接后的中间结果集行数估计偏差，原估计仅191行，实际可能远超，强制乘以0.1系数以修正低估问题",
+      "调整连接顺序为`web_returns`→`customer_demographics`→`customer_address`→`reason`→`web_sales`→`date_dim`→`web_page`，将小结果集表前置作为驱动表，避免早期中间结果膨胀",
+      "强制`web_returns`与`customer_demographics`之间使用哈希连接，替代低效的嵌套循环连接，避免因`cd1`表过滤后仍需遍历大量`web_returns`行导致的指数级开销",
+      "强制`web_sales`使用索引扫描（`web_sales_pkey`），避免全表扫描，确保连接键匹配高效",
+      "提升`web_returns`与`customer_address`的并行度至4，加速大表扫描与哈希构建过程",
+      "强制`date_dim`使用索引仅索引扫描，避免回表，提升时间过滤效率"
+    ],
+    "hint_combination": "/*+ Rows(web_returns customer_demographics *0.1) Leading( (web_returns (customer_demographics (customer_address (reason (web_sales (date_dim web_page))))) ) ) HashJoin(web_returns customer_demographics) HashJoin(web_returns customer_demographics customer_address) HashJoin(web_returns customer_demographics customer_address reason) HashJoin(web_returns customer_demographics customer_address reason web_sales) IndexScan(web_sales web_sales_pkey) IndexOnlyScan(date_dim _dta_index_date_dim_6_661577395__k7_k1) Parallel(web_returns 4) Parallel(customer_address 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）纠正优化器对`web_returns`与`customer_demographics`连接后行数的严重低估（原估计191，实际可能超1万），避免嵌套循环引发的千万级循环扫描；2）强制哈希连接替代嵌套循环，将O(n×m)复杂度降至O(n+m)；3）提升并行度并使用覆盖索引扫描，减少IO与CPU开销。整体性能瓶颈从嵌套循环与大表扫描转移到并行哈希连接，执行效率显著提升。"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "校正多层连接估计偏差，强制小表驱动、哈希连接与并行扫描，消除嵌套循环性能瓶颈并提升并行效率",
+    "core_optimization_points": [
+      "校正web_returns与customer_demographics连接后的中间结果集估计偏差，实际行数远低于优化器估计，需乘以修正系数0.01以避免错误计划",
+      "强制将customer_address、reason、date_dim、web_page等小表作为驱动表，优先连接，控制中间结果集膨胀",
+      "将web_returns与customer_address之间的嵌套循环连接强制改为哈希连接，避免因大表嵌套循环导致的指数级开销",
+      "将customer_demographics与web_returns之间的连接强制使用哈希连接，提升大表连接效率",
+      "提升web_returns、customer_address、customer_demographics的并行扫描能力，启用4个并行worker加速大表扫描",
+      "强制使用Index Only Scan对web_page和date_dim进行仅索引扫描，避免回表开销"
+    ],
+    "hint_combination": "/*+ Rows(web_returns customer_demographics *0.01) Leading( (customer_address reason date_dim web_page web_returns customer_demographics) ) HashJoin(web_returns customer_address) HashJoin(customer_demographics web_returns) Parallel(web_returns 4) Parallel(customer_address 4) Parallel(customer_demographics 4) IndexOnlyScan(web_page) IndexOnlyScan(date_dim) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）修正优化器对连接结果集的严重低估，避免错误选择嵌套循环；2）将大表连接强制转为哈希连接，消除嵌套循环的千万级循环开销；3）提升关键大表扫描并行度，加速数据读取；4）利用仅索引扫描减少IO，提升小表访问效率。整体实现从‘全表扫描+嵌套循环’向‘并行哈希连接+仅索引扫描’的性能跃迁。"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "通过校正关键表行数估计偏差、强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正`web_returns`表在连接`customer_address`和`customer_demographics`时的行数估计偏差，优化器低估其结果集规模，实际行数远高于估计值",
+      "强制`customer_demographics cd1`与`web_returns`使用哈希连接，避免因嵌套循环导致的千万级内层扫描开销",
+      "调整连接顺序为`web_returns → customer_demographics cd1 → customer_address → reason`，将小结果集驱动表前置，控制中间结果膨胀",
+      "强制`web_sales`与`web_returns`使用索引扫描（通过`web_sales_pkey`），避免全表扫描并提前过滤",
+      "提升`web_returns`和`customer_demographics`的并行度至4，充分利用多核资源加速大表扫描",
+      "使用`Rows` Hint校正`web_returns`与`customer_demographics cd1`连接后结果集的估计偏差，使优化器正确选择哈希连接"
+    ],
+    "hint_combination": "/*+ Rows(web_returns customer_demographics cd1 *0.3) Leading( (web_returns (customer_demographics cd1 customer_address reason)) ) HashJoin(web_returns customer_demographics cd1) HashJoin(web_returns customer_demographics cd1 customer_address) HashJoin(web_returns customer_demographics cd1 customer_address reason) IndexScan(web_sales web_sales_pkey) Parallel(web_returns 4) Parallel(customer_demographics cd1 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除`web_returns`与`customer_demographics`间嵌套循环的指数级扫描开销；2）通过`Rows` Hint纠正优化器对中间结果集的严重低估，强制选择哈希连接；3）提升大表并行度，加速扫描与连接阶段；4）强制使用覆盖索引扫描，减少回表开销。整体执行计划将从‘嵌套循环+全表扫描’转向‘哈希连接+并行索引扫描’的高效路径。"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "通过校正关键表行数估计偏差、强制最优连接顺序与哈希连接、提升并行度，消除嵌套循环性能瓶颈并加速大表扫描",
+    "core_optimization_points": [
+      "校正web_returns表行数估计偏差，其实际输出行数远低于优化器估计，需乘以0.1修正以避免错误连接路径选择",
+      "调整连接顺序为：web_returns → customer_demographics（cd1）→ customer_address → reason → date_dim → web_sales → web_page，将小结果集的web_returns作为驱动表，避免早期中间结果膨胀",
+      "强制web_returns与customer_demographics（cd1）使用哈希连接，替代原低效嵌套循环，提升大表连接效率",
+      "强制web_returns与customer_address使用哈希连接，避免因ca_state和ca_country过滤后仍产生高基数连接",
+      "提升customer_address表并行度至4，加速大表过滤扫描，充分利用多核资源",
+      "强制web_sales使用索引扫描（基于ws_item_sk, ws_order_number），避免全表扫描，减少回表开销"
+    ],
+    "hint_combination": "/*+ Rows(web_returns *0.1) Leading( (web_returns (cd1 (customer_address (reason (date_dim (web_sales web_page))))) ) ) HashJoin(web_returns cd1) HashJoin(web_returns customer_address) Parallel(customer_address 4) IndexScan(web_sales web_sales_pkey) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）纠正web_returns行数估计偏差，避免嵌套循环对大表的指数级扫描；2）通过哈希连接替代嵌套循环，显著降低连接代价；3）提升customer_address并行度，加速大表过滤；4）强制使用覆盖索引避免回表，减少IO开销。整体计划从原2000+毫秒级降至600毫秒以下。"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "通过校正多表连接行数估计偏差、强制最优连接顺序与哈希连接、优化扫描路径，消除嵌套循环性能瓶颈并提升并行效率",
+    "core_optimization_points": [
+      "校正web_returns与customer_demographics连接后中间结果集的严重估计偏差（实际行数约7346，估计仅191），强制提升行数估计以避免嵌套循环误判",
+      "调整连接顺序为：web_returns → customer_demographics（cd1）→ customer_address → reason → date_dim → web_sales → web_page，优先驱动小结果集表，控制中间结果膨胀",
+      "强制web_returns与customer_demographics（cd1）之间使用HashJoin，替代原低效的嵌套循环+哈希连接组合，提升大表连接效率",
+      "强制web_sales与web_returns之间使用IndexOnlyScan，利用已存在的主键索引避免回表，减少IO开销",
+      "提升customer_address与reason表的并行度，加速小表扫描与过滤，充分利用并行资源",
+      "强制date_dim与web_sales之间使用IndexOnlyScan，基于d_year=2002的高选择性快速定位时间维度"
+    ],
+    "hint_combination": "/*+ Rows(web_returns customer_demographics *38.5) Leading( (web_returns (customer_demographics customer_address reason) (date_dim (web_sales web_page))) ) HashJoin(web_returns customer_demographics) HashJoin(customer_demographics customer_address) HashJoin(customer_address reason) IndexOnlyScan(web_sales) IndexOnlyScan(date_dim) Parallel(customer_address 4) Parallel(reason 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修复web_returns与cd1连接后行数估计严重低估问题，避免嵌套循环对大表的重复扫描；2）强制哈希连接替代嵌套循环，降低连接代价；3）利用IndexOnlyScan减少回表IO；4）提升小表并行度，加速过滤与连接，整体实现从O(n²)嵌套循环到O(n)哈希连接的性能跃迁"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "通过校正关键表行数估计偏差、强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正web_returns表因多条件过滤导致的行数严重低估，实际匹配行数远高于估计值，使用Rows Hint修正中间结果集规模",
+      "调整连接顺序为customer_demographics(cd1) → web_returns → customer_address → reason → web_sales → web_page → date_dim，将高选择性过滤的小结果集作为驱动表，避免早期中间结果膨胀",
+      "强制web_returns与customer_address之间使用HashJoin，替代原低效的Nested Loop，避免因外层驱动表过大导致内表重复扫描",
+      "强制web_returns与customer_demographics(cd1)之间使用HashJoin，避免因cd1过滤后结果集小但被错误地用NestLoop连接",
+      "提升web_returns、customer_address、customer_demographics等大表扫描的并行度，充分利用多核资源加速数据读取",
+      "使用Index Only Scan强制对web_page和date_dim进行无回表访问，减少IO开销"
+    ],
+    "hint_combination": "/*+ Rows(web_returns *0.02) Leading( (cd1 web_returns customer_address reason web_sales web_page date_dim) ) HashJoin(cd1 web_returns) HashJoin(web_returns customer_address) HashJoin(web_returns reason) Parallel(web_returns 8) Parallel(customer_address 4) Parallel(cd1 4) IndexOnlyScan(web_page) IndexOnlyScan(date_dim) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正web_returns表行数估计偏差（原估计1行，实际约2.8万行），消除嵌套循环对大表的千万级循环扫描；2）通过哈希连接替代嵌套循环，将O(n×m)复杂度降至O(n+m)；3）提升并行度显著加速大表扫描；4）仅索引扫描减少回表IO，降低总IO开销。整体实现从‘嵌套循环+全表扫描’到‘哈希连接+并行+覆盖索引’的性能跃迁。"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "通过校正关键表行数估计偏差、强制最优连接顺序与哈希连接、提升并行度，消除嵌套循环性能瓶颈并加速大表扫描",
+    "core_optimization_points": [
+      "校正web_returns表与customer_demographics表连接后的中间结果集行数估计偏差，原估计仅191行但实际可能达数千行，使用Rows Hint修正估计值以避免嵌套循环误判",
+      "调整连接顺序为：web_page → date_dim → web_sales → web_returns → customer_demographics(cd1) → customer_address → reason，确保小结果集表优先作为驱动表，控制中间结果膨胀",
+      "强制web_returns与customer_demographics(cd1)使用HashJoin，替代低效的嵌套循环连接，避免对大表进行重复扫描",
+      "强制web_returns与customer_address使用HashJoin，提升大表连接效率，避免顺序扫描与嵌套循环开销",
+      "提升web_returns、customer_demographics、customer_address的并行扫描能力，利用多核资源并行处理大表数据",
+      "启用Index Only Scan对web_sales和web_page进行无回表扫描，减少IO开销，提升聚合前数据获取效率"
+    ],
+    "hint_combination": "/*+ Rows(web_returns customer_demographics cd1 *10.0) Leading( (web_page date_dim web_sales web_returns cd1 ca_address reason) ) HashJoin(web_returns cd1) HashJoin(web_returns ca_address) IndexOnlyScan(web_sales) IndexOnlyScan(web_page) Parallel(web_returns 4) Parallel(customer_demographics 4) Parallel(customer_address 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）纠正web_returns与cd1连接后结果集估计偏差，避免嵌套循环对大表的重复扫描；2）强制哈希连接替代嵌套循环，将O(n²)复杂度降为O(n)；3）提升并行度充分利用多核CPU；4）Index Only Scan减少回表IO，显著降低聚合前数据获取开销。整体计划将从当前的嵌套循环+顺序扫描结构，转变为高效并行哈希连接+仅索引扫描的最优路径。"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "通过校正关键表行数估计偏差、强制最优连接顺序与哈希连接、提升并行度，消除嵌套循环性能瓶颈并加速大表扫描",
+    "core_optimization_points": [
+      "校正web_returns表行数估计偏差，优化器低估其连接后结果集规模，实际行数远高于估计值",
+      "调整连接顺序为customer_demographics(cd1) → customer_address → web_returns → web_sales，将高选择性过滤表作为驱动表，避免早期中间结果膨胀",
+      "强制web_returns与customer_address使用HashJoin，替代低效的嵌套循环连接，避免因驱动表行数膨胀导致内表被重复扫描",
+      "强制web_returns与cd1使用HashJoin，提升连接效率，避免嵌套循环在大表上逐行探测",
+      "提升web_returns和customer_address的并行扫描度至4，充分利用多核资源加速大表扫描",
+      "强制web_sales使用IndexOnlyScan，利用已存在的覆盖索引避免回表开销"
+    ],
+    "hint_combination": "/*+ Rows(web_returns *0.2) Leading( (cd1 customer_address web_returns web_sales) ) HashJoin(cd1 web_returns) HashJoin(customer_address web_returns) Parallel(web_returns 4) Parallel(customer_address 4) IndexOnlyScan(web_sales _dta_index_web_sales_6_1269579561__k1_k4_k5_18) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）校正web_returns行数估计偏差，消除嵌套循环的指数级膨胀；2）强制哈希连接替代嵌套循环，避免对大表的重复扫描；3）提升并行度加速大表扫描；4）使用IndexOnlyScan避免回表，减少IO开销。整体计划从原嵌套循环+大量顺序扫描转为高效哈希连接+并行扫描+覆盖索引，性能跃迁显著。"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "校正严重行数估计偏差，强制最优连接顺序与哈希连接，避免嵌套循环对大表的指数级扫描，提升并行效率",
+    "core_optimization_points": [
+      "识别并修正web_returns与customer_demographics连接后结果集的严重低估（估计191行，实际远超）——通过Rows Hint校正为合理值",
+      "调整连接顺序为：web_returns → customer_demographics（cd1）→ customer_address → reason → web_sales → date_dim → web_page，使小结果集驱动大表，控制中间结果膨胀",
+      "强制web_returns与cd1之间使用HashJoin，替代低效的嵌套循环，避免因cd1过滤后行数被低估导致的嵌套循环性能崩溃",
+      "强制web_returns与customer_address之间使用HashJoin，避免因ca_state过滤后结果集未被准确估计引发的低效连接",
+      "提升web_returns与customer_demographics的并行扫描能力，加速大表过滤阶段",
+      "强制web_sales使用Index Only Scan，避免回表开销，提升聚合前数据获取效率"
+    ],
+    "hint_combination": "/*+ Rows(web_returns cd1 *10.0) Leading( (web_returns (cd1 (customer_address (reason (web_sales (date_dim web_page))))) ) ) HashJoin(web_returns cd1) HashJoin(web_returns customer_address) IndexOnlyScan(web_sales) Parallel(web_returns 4) Parallel(cd1 4) Parallel(customer_address 4) */",
+    "expected_performance_benefit": "预计执行耗时降低70%-85%。核心收益来自：1）消除因估计偏差引发的嵌套循环对web_returns（144万行）的千万次循环扫描；2）通过哈希连接将大表间等值连接代价从O(n²)降至O(n)；3）并行加速大表过滤与扫描；4）Index Only Scan避免回表，减少IO开销。整体计划从高代价嵌套循环树重构为高效哈希驱动的并行执行流。"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "校正严重行数估计偏差，重构连接顺序并强制哈希连接，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "修正web_returns与customer_demographics连接后中间结果集的严重估计偏差（实际行数约7005，估计仅1，偏差超7000倍），通过Rows Hint强制校正",
+      "调整连接顺序为：web_returns → customer_demographics（cd1）→ customer_address → reason → customer_demographics（cd2）→ web_sales → web_page → date_dim，优先以小结果集驱动大表扫描，避免早期中间结果膨胀",
+      "强制web_returns与cd1之间使用HashJoin，替代原低效的嵌套循环连接，避免因驱动表行数估计严重偏低导致内层循环次数失控",
+      "提升web_returns、customer_address、customer_demographics等大表扫描的并行度至4，加速并行扫描阶段",
+      "强制web_sales使用Index Only Scan（基于其主键索引），避免回表开销，提升聚合前数据获取效率"
+    ],
+    "hint_combination": "/*+ Rows(web_returns cd1 *7005) Leading( (web_returns (cd1 (customer_address (reason (cd2 (web_sales (web_page date_dim))))))) ) HashJoin(web_returns cd1) HashJoin(web_returns cd1 customer_address) HashJoin(web_returns cd1 customer_address reason) HashJoin(web_returns cd1 customer_address reason cd2) HashJoin(web_returns cd1 customer_address reason cd2 web_sales) Parallel(web_returns 4) Parallel(customer_address 4) Parallel(cd1 4) Parallel(cd2 4) IndexOnlyScan(web_sales) */",
+    "expected_performance_benefit": "预计执行耗时降低70%-85%。核心收益来自：1）纠正优化器对连接中间结果的严重误判，避免嵌套循环执行数千万次；2）强制哈希连接替代嵌套循环，显著降低大表连接开销；3）并行扫描加速大表数据读取；4）Index Only Scan消除web_sales回表IO，提升聚合前数据获取效率。整体将从原计划的数秒级降至百毫秒级。"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "修正严重行数估计偏差，强制小表驱动大表连接顺序，使用哈希连接替代嵌套循环，提升并行扫描效率，全面优化中间结果膨胀与IO开销",
+    "core_optimization_points": [
+      "校正web_returns与customer_demographics连接后结果集的严重低估（估计191行，实际远超），通过Rows Hint修正为合理预估值，消除优化器误判",
+      "调整连接顺序为：customer_demographics(cd1) → customer_address → web_returns → web_sales → date_dim → web_page，将高选择性过滤的小表作为驱动表，控制中间结果集膨胀",
+      "强制web_returns与customer_address之间使用HashJoin，避免因大表嵌套循环导致的O(n²)性能退化",
+      "强制web_returns与cd1之间使用HashJoin，提升等值连接效率，避免低效的嵌套循环扫描",
+      "启用customer_address与web_returns的并行扫描，提升大表扫描并行度，充分利用多核资源",
+      "强制web_sales使用Index Only Scan，避免回表开销，因查询仅需ws_item_sk、ws_order_number等索引列"
+    ],
+    "hint_combination": "/*+ Rows(web_returns *0.05) Rows(customer_demographics cd1 *0.01) Leading( (cd1 (customer_address (web_returns (web_sales (date_dim web_page)))) ) ) HashJoin(web_returns customer_address) HashJoin(web_returns cd1) Parallel(customer_address 4) Parallel(web_returns 4) IndexOnlyScan(web_sales) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）纠正优化器对中间结果集的严重低估（原估计1行，实际可能数千行），避免嵌套循环无限膨胀；2）将原嵌套循环结构改为哈希连接，消除O(n²)扫描开销；3）通过并行扫描加速大表（customer_address、web_returns）读取；4）Index Only Scan减少web_sales回表IO。整体执行路径从‘低效嵌套循环+全表扫描’转变为‘小表驱动+哈希连接+并行+覆盖索引’的最优组合。"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "通过校正关键表行数估计偏差、强制哈希连接并优化连接顺序，消除嵌套循环性能瓶颈，显著降低中间结果膨胀与IO开销",
+    "core_optimization_points": [
+      "校正web_returns表与customer_demographics cd1的连接结果集估计偏差，实际行数远低于优化器估计，强制乘以0.05系数修正",
+      "调整连接顺序为：web_returns → customer_demographics cd1 → customer_address → reason，将小结果集驱动表前置，避免早期中间结果膨胀",
+      "强制web_returns与customer_demographics cd1之间使用HashJoin，替代低效的嵌套循环连接，避免对大表进行千万级循环扫描",
+      "强制web_sales与web_returns之间的连接使用HashJoin，避免因连接键非唯一导致的嵌套循环膨胀",
+      "提升customer_address与customer_demographics表的并行扫描度至4，加速大表过滤与扫描",
+      "强制web_sales使用IndexOnlyScan，利用已有索引覆盖所有查询列，避免回表开销"
+    ],
+    "hint_combination": "/*+ Rows(web_returns cd1 *0.05) Leading( (web_returns (cd1 (customer_address (reason (web_sales (web_page date_dim)))))) ) HashJoin(web_returns cd1) HashJoin(web_sales web_returns) Parallel(customer_address 4) Parallel(cd1 4) IndexOnlyScan(web_sales _dta_index_web_sales_6_1269579561__k1_k4_k5_18) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环对web_returns（144万行）与cd1（192万行）的指数级扫描；2）通过哈希连接将大表连接代价从O(n×m)降至O(n+m)；3）利用IndexOnlyScan避免web_sales回表，减少随机IO；4）并行加速大表过滤，提升整体吞吐。优化后总代价预计从83591降至29000以下。"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "通过校正关键表行数估计偏差、强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正web_returns表在多条件过滤下的行数估计偏差，避免优化器低估其结果集规模",
+      "强制将customer_address与web_returns的连接改为哈希连接，避免嵌套循环在大表上循环扫描",
+      "调整连接顺序为customer_address → customer_demographics(cd1) → web_returns → web_sales，使小结果集驱动大表连接，控制中间结果膨胀",
+      "强制web_returns与customer_demographics(cd1)使用哈希连接，替代低效的嵌套循环连接",
+      "提升web_returns和customer_demographics的并行扫描能力，加速大表过滤",
+      "强制使用仅索引扫描覆盖关键列，减少回表开销"
+    ],
+    "hint_combination": "/*+ Rows(web_returns *0.05) Leading( (customer_address (customer_demographics cd1 web_returns) web_sales) ) HashJoin(customer_address web_returns) HashJoin(customer_demographics cd1 web_returns) Parallel(customer_demographics 4) Parallel(web_returns 4) IndexOnlyScan(customer_demographics cd1 _dta_index_web_sales_6_1269579561__k1_k5_k18_16_29_34) IndexOnlyScan(web_returns web_returns_pkey) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）修正web_returns表行数估计偏差，避免嵌套循环被误选；2）通过哈希连接替代嵌套循环，消除对大表的千万级循环扫描；3）优化连接顺序，使小结果集驱动大表，有效控制中间结果膨胀；4）并行扫描加速大表过滤，仅索引扫描减少回表开销，整体提升I/O与CPU效率"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "通过校正多表连接结果集估计偏差、强制哈希连接并优化连接顺序，消除嵌套循环导致的性能瓶颈，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正web_returns与customer_demographics连接后中间结果集的行数估计偏差，优化器低估导致错误选择嵌套循环连接",
+      "强制web_returns与customer_demographics之间使用哈希连接，替代低效的嵌套循环连接，避免对大表的多次扫描",
+      "调整连接顺序为：web_returns → customer_demographics（cd1）→ customer_address → reason → date_dim → web_sales → web_page，将小结果集驱动表前置，控制中间结果膨胀",
+      "强制customer_demographics cd1与web_returns使用哈希连接，避免因多条件过滤导致的行数误估引发的嵌套循环滥用",
+      "提升customer_address和web_returns的并行扫描并行度，充分利用多核资源加速大表扫描",
+      "强制web_sales使用索引扫描（基于主键），避免全表扫描，提升连接效率"
+    ],
+    "hint_combination": "/*+ Rows(web_returns customer_demographics *0.05) Leading( (web_returns (customer_demographics cd1) (customer_address reason) date_dim web_sales web_page) ) HashJoin(web_returns customer_demographics cd1) HashJoin(web_returns customer_demographics cd1 customer_address) HashJoin(web_returns customer_demographics cd1 customer_address reason) HashJoin(web_returns customer_demographics cd1 customer_address reason date_dim) HashJoin(web_returns customer_demographics cd1 customer_address reason date_dim web_sales) IndexScan(web_sales web_sales_pkey) Parallel(customer_address 4) Parallel(web_returns 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）修正优化器对中间结果集（约191行）的严重低估（实际远高于估计），避免嵌套循环对web_returns的千万级重复扫描；2）强制哈希连接替代嵌套循环，将O(n×m)复杂度降为O(n+m)；3）并行扫描加速大表（web_returns、customer_address）读取；4）主键索引扫描避免全表扫描，减少IO开销。整体执行计划将从‘高延迟嵌套循环+多层Gather’重构为‘高效哈希连接+并行扫描’的高性能路径。"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "通过校正多表连接估计偏差、强制最优连接顺序与哈希连接、启用并行扫描，消除嵌套循环性能瓶颈，显著降低执行耗时",
+    "core_optimization_points": [
+      "校正web_returns与customer_demographics连接后的中间结果集估计偏差，优化器低估实际行数约100倍，需通过Rows Hint修正",
+      "强制将customer_address、reason、web_page、date_dim等小表作为驱动表，优先连接，避免大表过早参与连接导致中间结果膨胀",
+      "强制customer_demographics cd1与web_returns使用HashJoin，替代低效嵌套循环，解决因cd1过滤后结果集小但被错误嵌套扫描的问题",
+      "强制web_sales与web_returns使用HashJoin，避免因连接键不唯一导致的嵌套循环循环次数指数级增长",
+      "提升web_returns、customer_address、customer_demographics等大表扫描的并行度，加速全表扫描与哈希构建",
+      "强制使用Index Only Scan对web_page和date_dim进行无回表扫描，减少IO开销"
+    ],
+    "hint_combination": "/*+ Rows(web_returns *0.01) Rows(customer_demographics cd1 *0.01) Leading( (customer_address (reason (web_page (date_dim (web_returns (cd1 cd2)))))) ) HashJoin(customer_demographics cd1 web_returns) HashJoin(web_sales web_returns) Parallel(web_returns 8) Parallel(customer_address 8) Parallel(customer_demographics cd1 8) Parallel(customer_demographics cd2 8) IndexOnlyScan(web_page) IndexOnlyScan(date_dim) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环对web_returns的千万级重复扫描；2）通过Rows Hint修正优化器对中间结果集的严重低估；3）利用哈希连接并行化处理大表连接；4）通过Index Only Scan减少对web_page和date_dim的回表IO，整体IO与CPU代价显著下降"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "通过校正关键表行数估计偏差、优化连接顺序并强制哈希连接，消除嵌套循环的性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正web_returns表行数估计偏差，原估计仅1行但实际匹配行数远超预期，强制修正为合理中间结果规模",
+      "调整连接顺序为：web_returns → customer_demographics(cd1) → customer_address → reason → date_dim → web_sales → web_page，优先将高选择性过滤的表作为驱动表，避免中间结果过早膨胀",
+      "强制web_returns与customer_demographics(cd1)使用哈希连接，替代低效嵌套循环，避免对cd1的重复扫描",
+      "强制web_returns与customer_address使用哈希连接，提升大表连接效率",
+      "对customer_address启用并行扫描，提升其过滤阶段的并行度，加速状态筛选",
+      "对web_sales启用索引扫描并强制使用覆盖索引，避免回表开销，提升聚合前数据获取效率",
+      "对web_page和date_dim启用索引仅扫描（IndexOnlyScan），减少IO开销"
+    ],
+    "hint_combination": "/*+ Rows(web_returns *0.005) Leading( (web_returns (cd1 (ca_address (reason (date_dim (web_sales web_page)))))) ) HashJoin(web_returns cd1) HashJoin(web_returns ca_address) IndexScan(web_sales web_sales_pkey) IndexOnlyScan(web_page web_page_pkey) IndexOnlyScan(date_dim _dta_index_date_dim_6_661577395__k7_k1) Parallel(ca_address 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正web_returns行数估计偏差，避免嵌套循环对大表的千万级循环；2）通过哈希连接替代嵌套循环，显著减少CPU与IO开销；3）对web_sales启用覆盖索引扫描，避免回表；4）对customer_address启用并行扫描，加速状态筛选；5）web_page与date_dim使用仅索引扫描，降低IO。整体执行计划从‘嵌套循环+全表扫描’重构为‘哈希连接+覆盖索引+并行扫描’的高性能路径。"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "通过校正多表连接中间结果集估计偏差，强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈，提升并行度以加速大表扫描",
+    "core_optimization_points": [
+      "校正web_returns与customer_demographics连接后中间结果集的严重低估，修正优化器对过滤后行数的误判（实际约7346行，估计仅191行）",
+      "调整连接顺序为：web_returns → customer_address → customer_demographics（cd1）→ reason → date_dim → web_sales → web_page，将小结果集表前置作为驱动表，避免早期中间结果膨胀",
+      "强制web_returns与customer_address之间使用HashJoin，替代原嵌套循环连接，避免因小表未被有效驱动导致的性能下降",
+      "强制web_returns与customer_demographics（cd1）之间使用HashJoin，提升等值连接效率，避免嵌套循环对大表的重复扫描",
+      "强制web_sales与web_returns之间使用IndexOnlyScan（通过主键连接），避免回表开销，同时利用覆盖索引特性提升性能",
+      "提升customer_address与customer_demographics的并行扫描并行度至4，加速大表过滤过程",
+      "对web_sales表启用Parallel(4)，提升其在连接中的并行处理能力，充分利用多核资源"
+    ],
+    "hint_combination": "/*+ Rows(web_returns customer_demographics *0.025) Leading( (web_returns (customer_address (customer_demographics cd1) reason) (date_dim (web_sales (web_page)))) ) HashJoin(web_returns customer_address) HashJoin(web_returns customer_demographics cd1) IndexOnlyScan(web_sales web_sales_pkey) Parallel(customer_address 4) Parallel(customer_demographics 4) Parallel(web_sales 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）修正连接中间结果集估计偏差（原估计1行，实际约7346行），避免嵌套循环被误选；2）强制哈希连接替代嵌套循环，消除千万级循环扫描；3）利用IndexOnlyScan减少回表开销；4）提升并行度，加速大表过滤与扫描，尤其在多核环境下表现显著。整体计划从原高成本嵌套循环结构重构为高效哈希连接+并行扫描的最优路径。"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "通过校正关键表行数估计偏差、强制最优连接顺序与哈希连接、启用并行扫描，消除嵌套循环性能瓶颈，显著降低中间结果集膨胀与IO开销",
+    "core_optimization_points": [
+      "校正`web_returns`与`customer_address`连接后的中间结果集估计偏差，实际行数远低于优化器估计，使用`Rows` Hint修正为合理值",
+      "调整连接顺序为`web_returns`→`customer_address`→`customer_demographics`（cd1）→`reason`→`date_dim`→`web_sales`→`web_page`，将小结果集表前置，避免早期中间结果膨胀",
+      "强制`web_returns`与`customer_address`使用`HashJoin`，替代原低效的`Nested Loop`，避免对大表进行多次循环扫描",
+      "强制`web_returns`与`customer_demographics`（cd1）使用`HashJoin`，提升等值连接效率，避免因`cd1`过滤后仍为大表导致嵌套循环性能崩溃",
+      "启用`web_returns`与`customer_address`的并行扫描，提升大表扫描吞吐量，充分利用多核CPU资源",
+      "强制`web_sales`使用`IndexOnlyScan`通过`web_sales_pkey`索引获取所需字段，避免回表开销，提升聚合效率"
+    ],
+    "hint_combination": "/*+ Rows(web_returns customer_address *0.05) Leading( (web_returns (customer_address (customer_demographics cd1 (reason (date_dim (web_sales web_page))))) ) ) HashJoin(web_returns customer_address) HashJoin(web_returns customer_demographics cd1) Parallel(web_returns 4) Parallel(customer_address 4) IndexOnlyScan(web_sales web_sales_pkey) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）消除`web_returns`与`customer_address`之间因估计偏差导致的嵌套循环循环次数爆炸；2）通过哈希连接替代嵌套循环，将O(n×m)复杂度降至O(n+m)；3）启用并行扫描加速大表扫描；4）`web_sales`使用仅索引扫描，避免回表IO，显著减少I/O总量。整体实现从‘全表扫描+嵌套循环’到‘并行哈希连接+仅索引扫描’的质变优化。"
+  }
+]

@@ -1,0 +1,280 @@
+[
+  {
+    "proposal_id": 1,
+    "strategy_overview": "校正关键表行数估计偏差，强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈并提升并行效率",
+    "core_optimization_points": [
+      "校正orders表在过滤条件下的行数估计偏差：优化器估计147498行，实际为143289行，但因后续连接膨胀被低估；通过Rows(orders *0.1)修正其在连接树中的中间结果集规模，防止后续连接因估计过低而错误选择嵌套循环",
+      "调整连接顺序为customer→orders→lineitem→nation，将最小结果集的customer作为驱动表，避免大表lineitem过早参与连接导致中间结果膨胀",
+      "强制customer与orders之间使用HashJoin，替代原计划中因估计偏差导致的低效嵌套循环（NestLoop），避免对lineitem进行千万级循环扫描",
+      "强制lineitem与orders之间使用HashJoin，利用已存在的l_orderkey与o_orderkey索引，避免因小表过滤后仍全表扫描造成的IO浪费",
+      "提升lineitem表并行度至4，充分利用其5999万行数据的并行扫描潜力，加速大表过滤与连接阶段的执行"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(lineitem orders) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%。核心收益来自：1）消除原计划中对lineitem的嵌套循环扫描（实际执行中出现4个worker各扫描370万行），避免了千万级循环开销；2）通过Rows(orders *0.1)修正优化器对中间结果集的严重低估，使连接顺序与方法选择趋于合理；3）并行度提升使大表扫描阶段加速，尤其在SSD环境下效果显著；4）哈希连接替代嵌套循环，大幅降低总IO与CPU代价"
+  },
+  {
+    "proposal_id": 2,
+    "strategy_overview": "通过校正统计估计偏差、强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正orders表的行数估计偏差：实际过滤后行数约14.3万，远低于优化器估计的58.9万，使用Rows Hint乘以0.25系数修正",
+      "调整连接顺序为customer → orders → lineitem → nation，使最小结果集的customer作为驱动表，避免早期中间结果膨胀",
+      "强制customer与orders之间使用HashJoin，替代原计划中低效的Parallel Nested Loop，避免对大表lineitem的千万级循环扫描",
+      "强制lineitem与orders之间使用HashJoin，避免因l_returnflag过滤后仍需全表扫描的嵌套循环开销",
+      "提升lineitem表并行度至4，充分利用其5999万行的大数据量，加速全表扫描与过滤阶段",
+      "强制nation表使用SeqScan，因其仅25行且无索引使用必要，避免不必要的索引扫描开销"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.25) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(lineitem orders) Parallel(lineitem 4) SeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除原计划中对lineitem的嵌套循环扫描（实际执行时间占比超40%）；2）修正orders行数估计偏差，使优化器正确选择哈希连接；3）通过并行扫描加速lineitem的大规模过滤；4）避免对nation表的索引扫描开销。整体将从6秒级降至2秒以内。"
+  },
+  {
+    "proposal_id": 3,
+    "strategy_overview": "通过校正行数估计偏差、优化连接顺序并强制哈希连接，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正orders表在过滤条件下的实际行数估计，修正优化器对驱动表规模的严重低估（估计14.7万，实际约14.3万，偏差仅约3%，但连接链中误判导致整体计划失准）",
+      "调整连接顺序为customer → orders → lineitem → nation，优先以小结果集customer作为驱动表，避免大表lineitem提前参与连接导致中间结果膨胀",
+      "强制customer与orders之间使用HashJoin，替代原计划中因误判而选择的嵌套循环连接，消除对lineitem的千万级重复扫描开销",
+      "强制lineitem与orders之间的连接使用HashJoin，避免因l_returnflag = 'R'过滤后仍采用嵌套循环带来的性能退化",
+      "提升lineitem表并行扫描并行度至4，充分利用大表扫描的并行潜力，加速数据读取",
+      "强制nation表使用SeqScan，因其仅25行且无索引可利用，顺序扫描最优，避免不必要的索引扫描开销"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.97) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(lineitem orders) Parallel(lineitem 4) SeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环对lineitem的重复扫描（原计划中lineitem被扫描4次×370万行，共约1480万次访问）；2）通过哈希连接将大表连接代价从O(n×m)降至O(n+m)；3）并行扫描提升大表读取吞吐；4）修正行数估计使优化器正确选择连接路径，避免因估计偏差引发的错误计划。预计总执行时间从6秒降至1.8秒以下。"
+  },
+  {
+    "proposal_id": 4,
+    "strategy_overview": "校正关键表行数估计偏差，强制优化连接顺序与哈希连接，消除嵌套循环性能瓶颈并提升并行效率",
+    "core_optimization_points": [
+      "修正orders表因日期范围过滤后实际行数远低于估计值的问题，通过Rows Hint校正其连接前的行数估计，避免优化器误判驱动表规模",
+      "调整连接顺序为customer→orders→lineitem→nation，将小结果集的customer作为最外层驱动表，防止早期连接产生过大的中间结果集",
+      "强制customer与orders之间使用哈希连接，替代原计划中因错误估计导致的嵌套循环连接，避免对lineitem的千万级循环扫描",
+      "强制lineitem与orders之间使用哈希连接，利用其高选择性过滤条件和大表规模，提升连接效率",
+      "提升lineitem表并行扫描并行度至4，充分利用系统资源加速大表顺序扫描与过滤",
+      "启用nation表的顺序扫描以最小化其开销，因其仅25行且无索引优势"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(lineitem orders) Parallel(lineitem 4) SeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环对lineitem的重复扫描（原计划循环4次，每次扫描超370万行）；2）通过Rows Hint校正orders行数估计，使优化器正确选择customer为驱动表；3）并行扫描加速lineitem大表过滤，减少IO延迟；4）哈希连接替代嵌套循环，避免CPU开销指数级增长"
+  },
+  {
+    "proposal_id": 5,
+    "strategy_overview": "修正优化器对orders表行数的严重低估，强制以customer为驱动表并采用哈希连接，消除嵌套循环性能瓶颈，提升并行度加速大表扫描",
+    "core_optimization_points": [
+      "校正orders表在过滤条件下的实际行数估计偏差，优化器低估了10倍以上，需通过Rows Hint修正",
+      "调整连接顺序为customer → orders → lineitem → nation，使小结果集customer作为最外层驱动表，控制中间结果集膨胀",
+      "强制customer与orders之间使用HashJoin，替代低效的嵌套循环连接，避免对lineitem的千万次重复扫描",
+      "强制lineitem与orders之间使用HashJoin，避免因lineitem大表扫描导致的哈希表构建代价过高",
+      "提升lineitem表的并行扫描并行度至4，充分利用多核CPU加速大表顺序扫描",
+      "通过Leading( (customer (orders (lineitem nation))) )构建最优灌木树连接结构，确保数据尽早过滤"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer (orders (lineitem nation))) ) HashJoin(customer orders) HashJoin(orders lineitem) HashJoin(lineitem nation) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除原计划中对lineitem的千万级嵌套循环扫描；2）修正orders行数估计后，优化器正确选择以customer为驱动表；3）并行扫描加速大表扫描，避免单线程瓶颈；4）哈希连接避免了外部排序与磁盘溢出，显著降低I/O与CPU开销"
+  },
+  {
+    "proposal_id": 6,
+    "strategy_overview": "修正统计信息偏差导致的错误连接顺序与连接方法选择，强制高效哈希连接并优化并行执行，显著降低大表扫描与中间结果膨胀开销",
+    "core_optimization_points": [
+      "校正orders表行数估计偏差：实际过滤后行数为143,289，远低于优化器估计的589,992，使用Rows Hint乘以0.24修正，避免后续连接误判为大结果集",
+      "调整连接顺序为customer→orders→lineitem→nation，将最小结果集customer作为驱动表，防止早期连接产生超大中间结果",
+      "强制customer与orders之间使用HashJoin，替代原计划中因估计偏差导致的嵌套循环连接，避免对lineitem的重复扫描",
+      "强制lineitem与orders之间使用HashJoin，利用已有索引加速连接，避免全表扫描与多次回表",
+      "提升lineitem表并行度至4，充分利用并行扫描加速大表过滤与连接操作",
+      "强制nation表使用SeqScan，因其仅25行，无需索引扫描，避免索引扫描的额外开销"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.24) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(lineitem orders) Parallel(lineitem 4) SeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自消除嵌套循环对lineitem的千万级重复扫描，通过哈希连接将连接代价从O(n²)降至O(n)，并行加速大表扫描；同时修正估计偏差后，优化器能正确选择小表驱动的大表连接路径，避免中间结果集膨胀。实际执行时间有望从6秒降至1.5秒以下。"
+  },
+  {
+    "proposal_id": 7,
+    "strategy_overview": "通过校正统计偏差、强制最优连接顺序与哈希连接、提升关键表并行度，彻底消除嵌套循环与磁盘排序瓶颈，实现性能跃升",
+    "core_optimization_points": [
+      "校正orders表的行数估计偏差：实际返回约14.3万行，但优化器估计为58.9万行，偏差高达4倍，通过Rows Hint修正为0.25倍系数以匹配真实选择性",
+      "调整连接顺序为customer→orders→lineitem→nation，将最小结果集的customer作为驱动表，避免早期连接产生超大中间结果",
+      "强制customer与orders使用哈希连接，替代原计划中因估计偏差导致的嵌套循环，消除外层循环扫描大表的性能灾难",
+      "强制lineitem与orders使用哈希连接，避免因l_returnflag过滤后仍需全表扫描引发的低效连接",
+      "提升lineitem表并行度至4，充分利用其5900万行数据的并行处理潜力，加速大表扫描",
+      "启用nation表的顺序扫描（虽小但无索引依赖），避免不必要的位图扫描开销"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.25) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(lineitem orders) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时从6000ms降至2000ms以内（降幅67%以上），核心收益来自：1）消除嵌套循环对orders表的千万级循环扫描；2）避免因行数误估导致的哈希表溢出与磁盘排序；3）并行加速lineitem大表扫描；4）连接顺序优化使中间结果集增长平缓，整体计划代价显著下降"
+  },
+  {
+    "proposal_id": 8,
+    "strategy_overview": "通过校正行数估计偏差、优化连接顺序并强制哈希连接，消除嵌套循环性能瓶颈，显著降低大表扫描与中间结果膨胀开销",
+    "core_optimization_points": [
+      "校正orders表因日期范围过滤导致的行数估计偏差，实际返回约14.3万行，而优化器估计为58.9万，修正系数约0.24，避免后续连接误判为大结果集",
+      "调整连接顺序为customer → orders → lineitem → nation，将小结果集customer作为驱动表，避免大表lineitem过早参与连接导致中间结果膨胀",
+      "强制customer与orders之间使用HashJoin，替代原低效的嵌套循环连接，避免因驱动表实际行数远高于估计值导致内层循环扫描成千上万次",
+      "强制lineitem与orders之间使用HashJoin，替代原Parallel Hash Join中因未优化导致的全表扫描与高内存消耗，提升连接效率",
+      "提升lineitem表并行度至4，充分利用并行扫描能力，加速大表（5999万行）的过滤与扫描过程",
+      "对nation表使用SeqScan，因其仅25行且无索引依赖，顺序扫描最优，避免不必要的索引扫描开销"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.24) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(lineitem orders) Parallel(lineitem 4) SeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自：消除嵌套循环对大表的千万级循环扫描；通过准确行数估计避免错误连接顺序；并行加速大表扫描；同时哈希连接替代嵌套循环显著降低CPU与IO开销，整体计划从磁盘排序+外部合并变为内存内高效哈希连接"
+  },
+  {
+    "proposal_id": 9,
+    "strategy_overview": "校正统计信息偏差，强制最优连接顺序与哈希连接，消除嵌套循环性能瓶颈并提升并行效率",
+    "core_optimization_points": [
+      "修正orders表因日期范围过滤导致的行数估计偏差，实际仅约14.3万行，但优化器高估至58万，通过Rows Hint乘以0.25校正",
+      "调整连接顺序为customer → orders → lineitem → nation，将小结果集customer作为驱动表，避免早期连接膨胀",
+      "强制customer与orders之间使用HashJoin，替代原低效嵌套循环（NestLoop），避免对lineitem进行千万次循环探测",
+      "强制lineitem与orders之间使用HashJoin，避免因l_returnflag过滤后仍全表扫描导致的IO浪费",
+      "提升lineitem表并行度至4，充分利用大表扫描的并行潜力，加速数据读取",
+      "为nation表添加SeqScan Hint，确保其小表扫描不被误用BitmapScan，提升小表连接效率"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.25) Leading( (customer (orders (lineitem nation))) ) HashJoin(customer orders) HashJoin(lineitem orders) Parallel(lineitem 4) SeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自：1）消除原计划中对lineitem的嵌套循环探测（实际执行114万行，但被循环扫描约370万次）；2）修正orders行数估计后，优化器正确选择HashJoin而非NestLoop；3）并行扫描加速大表读取；4）小表nation使用顺序扫描避免额外开销"
+  },
+  {
+    "proposal_id": 10,
+    "strategy_overview": "修正优化器对过滤后结果集的严重低估，强制以小表为驱动、哈希连接为核心，提升并行度并避免磁盘排序，全面消除性能瓶颈",
+    "core_optimization_points": [
+      "校正orders表因日期范围过滤后实际行数远低于估计值的问题，通过Rows Hint修正其连接前的中间结果集规模",
+      "调整连接顺序为customer → orders → lineitem → nation，将最小结果集的customer作为驱动表，避免大表早期膨胀",
+      "强制customer与orders之间使用HashJoin，替代原计划中因估计偏差导致的嵌套循环连接，消除千万级循环扫描开销",
+      "强制lineitem与orders之间使用HashJoin，避免原计划中因未利用索引导致的全表扫描与高IO",
+      "提升lineitem表并行扫描Worker数量至4，充分利用I/O资源加速大表扫描",
+      "强制nation表使用SeqScan而非Hash，因其仅25行且无索引依赖，避免无谓的哈希构建开销"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer (orders (lineitem nation))) ) HashJoin(customer orders) HashJoin(lineitem orders) Parallel(lineitem 4) SeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自：1）消除嵌套循环对orders与lineitem的千万次重复扫描；2）通过正确连接顺序控制中间结果集增长；3）并行加速大表扫描；4）避免磁盘排序与哈希溢出；5）精准控制扫描路径，减少无效IO"
+  },
+  {
+    "proposal_id": 11,
+    "strategy_overview": "通过校正关键表行数估计偏差、优化连接顺序并强制哈希连接，消除嵌套循环性能瓶颈，显著降低中间结果集膨胀与磁盘排序开销",
+    "core_optimization_points": [
+      "校正`orders`表在`o_orderdate`范围过滤后的行数估计偏差，实际返回约14.3万行，而优化器估计为58.9万，偏差高达4倍，使用`Rows(orders *0.24)`修正以避免错误连接顺序决策",
+      "校正`lineitem`表在`l_returnflag = 'R'`过滤后的真实行数，实际仅370万行，而优化器估计为378万，但结合`orders`的高选择性，需通过`Rows(lineitem *0.1)`进一步压缩中间结果集规模，防止哈希表溢出",
+      "调整连接顺序为`customer → orders → lineitem → nation`，将最小结果集的`customer`作为驱动表，避免`orders`作为驱动表导致中间结果集过大，且`nation`为极小表，应尽早连接",
+      "强制`customer`与`orders`之间使用哈希连接，替代原计划中因低估`orders`行数而错误选择的嵌套循环连接，避免对`customer`的每行重复扫描`orders`的大量数据",
+      "强制`lineitem`与`orders`之间使用哈希连接，提升大表等值连接效率，避免因`lineitem`全表扫描导致的高IO开销",
+      "提升`lineitem`表并行度至4，充分利用其5999万行的大数据量优势，加速`l_returnflag = 'R'`的过滤与哈希连接过程"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.24) Rows(lineitem *0.1) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(lineitem orders) HashJoin(customer orders lineitem) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时降低60%-80%，核心收益来自：消除嵌套循环对`orders`的千万级重复扫描；通过`Rows` Hint纠正优化器对`orders`和`lineitem`的严重估计偏差，使连接顺序与方法回归合理；并行加速`lineitem`扫描；减少磁盘排序与哈希溢出，整体执行路径从外部合并排序转为高效哈希连接+并行扫描，显著提升吞吐效率"
+  },
+  {
+    "proposal_id": 12,
+    "strategy_overview": "修正统计信息严重偏差导致的错误连接顺序与方法，强制小表驱动、哈希连接与并行扫描，消除嵌套循环与磁盘排序瓶颈",
+    "core_optimization_points": [
+      "校正orders表行数估计偏差：实际过滤后行数为143,289，优化器估计为589,992，偏差达4倍，使用Rows Hint乘以0.25修正",
+      "调整连接顺序为customer → orders → lineitem → nation，将最小结果集customer作为驱动表，避免大表提前膨胀",
+      "强制customer与orders使用HashJoin，替代原低效嵌套循环，消除千万级循环扫描开销",
+      "强制lineitem与orders使用HashJoin，避免因l_returnflag过滤后仍全表扫描的性能浪费",
+      "提升lineitem表并行度至4，加速其大表扫描过程，充分利用多核资源",
+      "强制nation表使用SeqScan，避免因小表误用索引扫描带来的额外开销"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.25) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(lineitem orders) Parallel(lineitem 4) SeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%，核心收益来自：1）消除原计划中对orders表的严重行数高估导致的错误嵌套循环；2）强制哈希连接避免对lineitem与orders的千万次循环探测；3）并行加速大表扫描；4）避免小表索引扫描的无效开销；整体计划从磁盘排序+外部合并变为内存哈希+并行扫描，性能跃迁"
+  },
+  {
+    "proposal_id": 13,
+    "strategy_overview": "通过校正关键表行数估计偏差、优化连接顺序并强制使用哈希连接，消除嵌套循环引发的性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正orders表因日期范围过滤导致的行数估计严重偏差，实际返回约14.3万行，远低于优化器估计的58.9万行，使用Rows Hint修正为乘以0.25系数",
+      "调整连接顺序为customer → orders → lineitem → nation，将最小结果集customer作为驱动表，避免早期连接产生超大中间结果",
+      "强制customer与orders之间使用HashJoin，替代原计划中低效的嵌套循环连接，消除对lineitem的千万次循环扫描",
+      "强制lineitem与orders之间使用HashJoin，避免因l_returnflag过滤后数据量大而引发的嵌套循环性能灾难",
+      "提升lineitem表并行扫描并行度至4，充分利用多核资源加速大表扫描，提升整体吞吐能力",
+      "强制nation表使用SeqScan，因其仅25行，无需索引扫描，且为小表，顺序扫描更高效"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.25) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(lineitem orders) Parallel(lineitem 4) SeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除原计划中对lineitem的嵌套循环扫描（实际循环28万次）；2）通过Rows Hint校正优化器对orders行数的严重误判，使连接顺序与方法选择更合理；3）提升lineitem并行度，加速大表扫描；4）避免小表索引扫描开销，提升整体并行效率"
+  },
+  {
+    "proposal_id": 14,
+    "strategy_overview": "校正统计信息偏差，优化连接顺序并强制哈希连接，消除嵌套循环与磁盘排序瓶颈，显著提升执行效率",
+    "core_optimization_points": [
+      "校正orders表行数估计偏差，优化器低估其过滤后结果集，实际行数为估计值的约10倍，使用Rows Hint修正",
+      "调整连接顺序为customer→orders→lineitem→nation，将最小结果集的customer作为驱动表，避免早期中间结果膨胀",
+      "强制customer与orders之间使用HashJoin，替代低效的嵌套循环连接，避免对lineitem进行千万级重复扫描",
+      "强制lineitem与orders之间使用HashJoin，利用已有索引快速定位，避免全表扫描与大量过滤开销",
+      "提升lineitem表并行度至4，加速大表扫描与过滤，充分利用多核并行能力",
+      "强制nation表使用SeqScan，其仅25行，无需索引扫描，避免索引查找开销"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(lineitem orders) Parallel(lineitem 4) SeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除原计划中对lineitem的4次并行全表扫描与嵌套循环扫描；2）修正orders行数估计偏差，使优化器正确选择哈希连接；3）通过并行加速大表扫描，减少IO瓶颈；4）避免磁盘外排序与哈希溢出，降低内存与磁盘压力"
+  },
+  {
+    "proposal_id": 15,
+    "strategy_overview": "通过校正关键表行数估计偏差、强制最优连接顺序与哈希连接、提升大表并行度，彻底消除嵌套循环与磁盘排序瓶颈",
+    "core_optimization_points": [
+      "校正orders表因日期范围过滤导致的行数估计严重偏差，实际返回约14.3万行，优化器估计仅14.7万，但实际执行中因过滤后行数被低估，导致连接顺序和方法误判；通过Rows(orders *0.1)修正其连接前结果集规模，使优化器更准确评估后续路径代价",
+      "调整连接顺序为customer→orders→lineitem→nation，将最小结果集的customer作为驱动表，避免早期连接产生超大中间结果；同时将nation（仅25行）提前作为小表参与连接，减少连接膨胀风险",
+      "强制customer与orders之间使用HashJoin，替代原计划中因低估结果集而选择的嵌套循环连接，避免对lineitem进行千万次重复扫描，消除性能瓶颈",
+      "强制lineitem与orders之间使用HashJoin，避免因lineitem过滤后仍高达370万行而引发的嵌套循环性能灾难；同时通过Parallel(lineitem 4)提升大表扫描并行度，加速过滤与连接阶段",
+      "通过Leading( (customer (orders (lineitem nation))) )构建灌木树连接结构，确保nation与lineitem先聚合，再与orders连接，最后与customer连接，形成逻辑最优路径"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer (orders (lineitem nation))) ) HashJoin(customer orders) HashJoin(lineitem orders) Parallel(lineitem 4) */",
+    "expected_performance_benefit": "预计执行耗时从6000ms降至2000ms以内（降幅65%~70%），核心收益来自：1）消除嵌套循环对lineitem的千万级重复扫描；2）避免大哈希/排序落盘（原计划Disk: 53016kB以上）；3）通过并行加速大表过滤与扫描；4）连接顺序优化使中间结果集增长平缓，整体代价模型回归真实路径"
+  },
+  {
+    "proposal_id": 16,
+    "strategy_overview": "通过校正统计偏差、重构连接顺序并强制哈希连接，消除嵌套循环导致的性能瓶颈，显著降低中间结果膨胀与扫描开销",
+    "core_optimization_points": [
+      "校正orders表行数估计偏差：实际返回约14.3万行，优化器估计仅14.7万行，但结合过滤条件与统计信息，真实结果集应为约14.3万行，修正系数为0.1，避免低估导致错误连接顺序决策",
+      "重构连接顺序为customer → orders → lineitem → nation，将最小结果集customer作为驱动表，避免大表lineitem过早参与连接导致中间结果膨胀",
+      "强制customer与orders之间使用HashJoin，替代原计划中因低估驱动表规模而误选的嵌套循环连接，避免对lineitem进行千万级循环扫描",
+      "强制lineitem与orders之间使用HashJoin，利用已存在的l_orderkey与o_orderkey索引，避免因行数估计偏差导致的低效嵌套循环或外部排序",
+      "提升lineitem表并行度至4，充分利用其5999万行的大表特性，加速全表扫描与过滤操作，减少单线程瓶颈",
+      "对nation表使用SeqScan，因其仅25行，无需索引扫描，且作为小表参与哈希连接，顺序扫描最高效"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(lineitem orders) HashJoin(customer orders lineitem) Parallel(lineitem 4) SeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时从6000ms降至2000ms以内，降幅达65%以上。核心收益来自：消除对lineitem的千万次嵌套循环扫描（原计划中worker执行4次，每次扫描约370万行），强制哈希连接使连接代价由O(n×m)降至O(n+m)；并行度提升加速大表扫描；行数校正确保优化器选择正确连接顺序，避免中间结果集膨胀至114万行。整体执行路径从‘大表驱动+嵌套循环’转向‘小表驱动+哈希连接+并行扫描’，符合PostgreSQL优化器最佳实践。"
+  },
+  {
+    "proposal_id": 17,
+    "strategy_overview": "通过校正关键表行数估计偏差、强制最优连接顺序与哈希连接、提升大表并行度，彻底消除嵌套循环性能瓶颈与磁盘排序开销",
+    "core_optimization_points": [
+      "校正orders表行数估计偏差：实际过滤后行数为143,289，远低于优化器估计的589,992，需乘以约0.24系数修正，避免后续连接误判",
+      "调整连接顺序为customer→orders→lineitem→nation，将小结果集customer作为驱动表，防止早期连接产生超大中间结果",
+      "强制customer与orders之间使用HashJoin，替代原低效的嵌套循环（NestLoop），避免对lineitem进行千万次重复扫描",
+      "强制lineitem与orders之间使用HashJoin，提升大表连接效率，避免因未命中索引导致的全表扫描与大量行过滤",
+      "提升lineitem表并行度至4，充分利用多核CPU资源，加速大表顺序扫描与过滤",
+      "强制nation表使用SeqScan，因其仅25行且无索引优势，顺序扫描效率最优"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.24) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(lineitem orders) Parallel(lineitem 4) SeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环对lineitem的千万级重复扫描；2）通过哈希连接避免外部排序与磁盘溢出（原计划Disk: 53016kB）；3）并行扫描加速大表读取；4）修正行数估计后，优化器将正确选择高效路径，避免错误的Gather Merge与Worker调度"
+  },
+  {
+    "proposal_id": 18,
+    "strategy_overview": "修正优化器对中间结果集的严重低估，强制以小表为驱动、哈希连接为主、并行扫描加速的大规模数据处理路径，消除磁盘排序与嵌套循环性能瓶颈",
+    "core_optimization_points": [
+      "校正orders表的行数估计偏差，实际返回约14.3万行，远低于优化器估计的147498行，但结合过滤条件后应为约14.3万，需按真实比例修正为约0.1倍以反映实际选择性",
+      "调整连接顺序为customer → orders → lineitem → nation，将最小结果集customer作为驱动表，避免早期连接产生超大中间结果",
+      "强制customer与orders之间使用哈希连接，替代原计划中因估计偏差导致的嵌套循环连接，避免对lineitem的千万级循环扫描",
+      "强制lineitem与orders之间使用哈希连接，利用已有l_orderkey与o_orderkey索引加速连接，避免全表扫描与嵌套循环",
+      "提升lineitem表并行度至4，充分利用其5999万行的大表扫描能力，加速数据获取",
+      "强制nation表使用顺序扫描，因其仅25行，无索引必要，且为常量表，顺序扫描最优"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(lineitem orders) Parallel(lineitem 4) SeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：消除原计划中因嵌套循环导致的对lineitem的4×28万次循环扫描（约114万次），改用哈希连接后仅需一次全表扫描；并行扫描加速大表数据读取；修正行数估计后优化器将正确选择哈希连接路径，避免磁盘排序与外层合并排序开销；整体从5.9秒降至1.5秒以下"
+  },
+  {
+    "proposal_id": 19,
+    "strategy_overview": "修正优化器对orders表过滤后行数的严重低估，强制以customer为驱动表并采用哈希连接，消除嵌套循环性能瓶颈，提升并行扫描效率",
+    "core_optimization_points": [
+      "校正orders表在o_orderdate范围过滤后的行数估计偏差：优化器估计147498行，实际为143289行，但结合lineitem过滤后整体连接结果被严重低估，需通过Rows Hint修正中间结果集规模",
+      "调整连接顺序为customer→orders→lineitem→nation，将最小结果集customer作为最外层驱动表，避免大表early expansion",
+      "强制customer与orders之间使用HashJoin，替代原计划中因低估行数导致的嵌套循环连接，避免对lineitem的千万级重复扫描",
+      "强制lineitem与orders之间使用HashJoin，避免因l_returnflag='R'过滤后仍采用SeqScan+BitmapScan导致的高随机IO开销",
+      "提升lineitem表并行扫描worker数量至4，充分利用其5999万行的大表特性，加速扫描阶段",
+      "强制nation表使用SeqScan，因其仅25行，无索引扫描必要，避免不必要的索引开销"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(lineitem orders) HashJoin(customer orders lineitem) Parallel(lineitem 4) SeqScan(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除嵌套循环对lineitem的千万次重复探测；2）通过Rows Hint校正中间结果集估计偏差，使优化器正确选择哈希连接；3）提升lineitem并行度，加速大表扫描；4）避免对nation的索引扫描开销。原计划中Sort与Hash的磁盘溢出问题将显著缓解，内存排序占比上升，整体执行效率大幅提升。"
+  },
+  {
+    "proposal_id": 20,
+    "strategy_overview": "修正优化器对过滤后结果集的严重低估，强制以小表customer为驱动，采用哈希连接并提升大表并行度，消除嵌套循环与磁盘排序瓶颈",
+    "core_optimization_points": [
+      "校正orders表在时间范围过滤后的行数估计偏差，实际返回约14.3万行，而优化器估计仅14.7万，但结合lineitem过滤后中间结果严重膨胀，需通过Rows Hint修正连接后结果集规模",
+      "调整连接顺序为customer → orders → lineitem → nation，使最小结果集的customer作为驱动表，避免大表先行连接导致中间结果过早膨胀",
+      "强制customer与orders之间使用HashJoin，替代原计划中因低估结果集而错误选择的嵌套循环连接，避免对lineitem进行千万次循环扫描",
+      "强制lineitem与orders之间使用HashJoin，避免因lineitem过滤后仍存大量数据导致嵌套循环性能崩溃",
+      "提升lineitem表的并行扫描并行度至4，充分利用多核资源加速大表扫描，缓解原计划中并行Worker不足的问题",
+      "禁用nation表的并行扫描（仅25行），避免小表并行带来的启动开销，提升资源利用率"
+    ],
+    "hint_combination": "/*+ Rows(orders *0.1) Leading( (customer orders lineitem nation) ) HashJoin(customer orders) HashJoin(orders lineitem) HashJoin(customer orders lineitem) Parallel(lineitem 4) NoParallel(nation) */",
+    "expected_performance_benefit": "预计执行耗时降低65%-80%。核心收益来自：1）消除原计划中对lineitem的嵌套循环扫描（实际执行286k行，但被误判为小表，导致循环286k次）；2）通过Rows Hint校正连接后结果集估计，使优化器正确选择哈希连接；3）提升lineitem并行度，加速大表扫描；4）禁用nation并行避免小表资源浪费。原计划中53GB磁盘排序可被消除，显著减少I/O与内存压力。"
+  }
+]
