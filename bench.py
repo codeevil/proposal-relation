@@ -66,6 +66,10 @@ def rank_obo_default_path(sql_path: Path, database: str) -> Path:
     return DATA_DIR / "obo_proposal" / db_dir_for(database) / f"{sql_path.stem}_rank.json"
 
 
+def output_dir_for(database: str) -> Path:
+    return DATA_DIR / "output" / db_dir_for(database)
+
+
 @dataclass
 class DbOptions:
     host: str = PGHOST
@@ -899,13 +903,14 @@ def run_one_proposal(proposal_id: int, label: str, hint: str, sql_content: str, 
     }
 
 
-def _print_results_table(results, header: str = None, output_file = None):
+def _print_results_table(results, header: str = None, output_file = None,
+                         rank_best_id: int = None):
     baseline_ms = None
     for r in results:
         if r["label"] == "baseline" and r["status"] == "ok":
             baseline_ms = r["elapsed_ms"]
 
-    headers = ["Proposal ID", "Label", "Elapsed (ms)", "Speedup", "Status", "Error"]
+    headers = ["Proposal ID", "Label", "Elapsed (ms)", "Speedup", "AgentRankBest", "Status", "Error"]
     rows = []
     for r in results:
         if r["status"] == "ok":
@@ -930,7 +935,8 @@ def _print_results_table(results, header: str = None, output_file = None):
             err = r.get("error_msg", "")
             if len(err) > 60:
                 err = err[:57] + "..."
-        rows.append([str(r["proposal_id"]), r["label"], elapsed, speedup, r["status"], err])
+        rank_best = "Yes" if (rank_best_id is not None and r["proposal_id"] == rank_best_id) else ""
+        rows.append([str(r["proposal_id"]), r["label"], elapsed, speedup, rank_best, r["status"], err])
 
     widths = [max(len(str(row[i])) for row in [headers] + rows) for i in range(len(headers))]
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
@@ -960,18 +966,19 @@ def _generate_stat_table(results_per_query: list[dict], stat_path: Path) -> None
       - best proposal row (minimum elapsed_ms among rows with status "ok")
 
     Writes a formatted table to ``stat_path`` with columns:
-      Query | Baseline(ms) | Best-Proposal | Best(ms) | Speedup-Base | Status | Error
+      Query | Baseline(ms) | Best-Proposal | Best(ms) | Speedup-Base | AgentRankBest | Status | Error
     """
     stat_path = Path(stat_path)
     stat_path.parent.mkdir(parents=True, exist_ok=True)
 
     headers = ["Query", "Baseline(ms)", "Best-Proposal",
-               "Best(ms)", "Speedup-Base", "Status", "Error"]
+               "Best(ms)", "Speedup-Base", "AgentRankBest", "Status", "Error"]
     rows = []
 
     for entry in results_per_query:
         sql_name = entry["sql_name"]
         results = entry["results"]
+        rank_best_id = entry.get("rank_best_id")
 
         baseline_ms = None
         best_result = None
@@ -1003,9 +1010,10 @@ def _generate_stat_table(results_per_query: list[dict], stat_path: Path) -> None
             error = ""
 
         bl_str = f"{baseline_ms:.2f}" if baseline_ms else "N/A"
+        rank_best_str = str(rank_best_id) if rank_best_id is not None else "-"
 
         rows.append([sql_name, bl_str, best_label, best_elapsed,
-                     speedup_base, status, error])
+                     speedup_base, rank_best_str, status, error])
 
     if not rows:
         logger.info("No query results to summarize.")
@@ -1186,18 +1194,56 @@ def _parse_proposals_lenient(text: str):
     return proposals, dropped
 
 
+def _load_rank_best_id(sql_path: Path, database: str, proposals_kind: str):
+    """Read the agent_rank result (``{stem}_rank.json``) and return the chosen
+    best proposal id, or None if missing/unparseable."""
+    rank_path = DATA_DIR / proposals_kind / db_dir_for(database) / f"{Path(sql_path).stem}_rank.json"
+    if not rank_path.exists():
+        return None
+    try:
+        text = _escape_raw_control_chars_in_json_strings(
+            _strip_markdown_fence(rank_path.read_text(encoding="utf-8")))
+        data = json.loads(text)
+        bid = data.get("best_proposal_id")
+        if isinstance(bid, bool):
+            return None
+        if isinstance(bid, int):
+            return bid
+        if isinstance(bid, float) and bid.is_integer():
+            return int(bid)
+        return None
+    except Exception:
+        pass
+    try:
+        m = re.search(r'"best_proposal_id"\s*:\s*(\d+)', rank_path.read_text(encoding="utf-8"))
+        if m:
+            return int(m.group(1))
+    except Exception:
+        pass
+    return None
+
+
 def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None,
-                  output_path: Path = None, output_file = None, header: str = None):
+                  output_path: Path = None, output_file = None, header: str = None,
+                  proposals_kind: str = "proposal"):
     """Execute baseline + each proposal in the proposals file, print timing table. Returns results.
 
+    ``proposals_kind`` selects the proposals source + rank file location and
+    controls the default output filename suffix: ``"proposal"`` (default) reads
+    ``data/proposal/{db_dir}/`` and ``"obo_proposal"`` reads ``data/obo_proposal/{db_dir}/``.
+
     The formatted table is written to ``output_path`` (default
-    ``./data/run_proposals_result.txt``). Pass ``output_file`` for callers that
-    already hold an open file handle (e.g. ``run_proposals_all`` aggregating
-    many tables into one file) — when supplied it overrides ``output_path``.
+    ``data/output/{db_dir}/run_proposals[_obo]_{stem}_result.txt``). Pass
+    ``output_file`` for callers that already hold an open handle (e.g.
+    ``run_proposals_all`` aggregating many tables into one file) — when supplied
+    it overrides ``output_path``.
     """
     sql_content = sql_path.read_text(encoding="utf-8").strip()
 
-    proposals_path = proposals_path or proposal_default_path(sql_path, opts.database)
+    if proposals_path is None:
+        proposals_path = (obo_proposal_default_path(sql_path, opts.database)
+                          if proposals_kind == "obo_proposal"
+                          else proposal_default_path(sql_path, opts.database))
     proposals_path = Path(proposals_path)
     if not proposals_path.exists():
         print(f"[ERROR] Proposals file not found: {proposals_path}", file=sys.stderr)
@@ -1209,11 +1255,15 @@ def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None,
         print(f"[ERROR] Proposals file must be a JSON array", file=sys.stderr)
         sys.exit(1)
 
+    rank_best_id = _load_rank_best_id(sql_path, opts.database, proposals_kind)
+    tag = "_obo" if proposals_kind == "obo_proposal" else ""
+
     if header is None:
         header = sql_path.name
 
     if output_file is None:
-        resolved_output_path = Path(output_path) if output_path else DATA_DIR / "run_proposals_result.txt"
+        resolved_output_path = (Path(output_path) if output_path
+                                else output_dir_for(opts.database) / f"run_proposals{tag}_{sql_path.stem}_result.txt")
         resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
         own_file = open(resolved_output_path, "w", encoding="utf-8")
         logger.info(f"Summary output: {resolved_output_path}")
@@ -1239,7 +1289,8 @@ def run_proposals(sql_path: Path, opts: DbOptions, proposals_path: Path = None,
             time.sleep(opts.sleep)
 
         sink = output_file if output_file is not None else own_file
-        _print_results_table(results, header=header, output_file=sink)
+        _print_results_table(results, header=header, output_file=sink,
+                             rank_best_id=rank_best_id)
     finally:
         if own_file is not None:
             own_file.close()
@@ -1499,15 +1550,16 @@ def cmd_run_queries(args):
 
 
 def run_proposals_all(directory: Path, opts: DbOptions, output_path: Path = None,
-                      stat_path: Path = None) -> None:
+                      stat_path: Path = None, proposals_kind: str = "proposal") -> None:
     """For each .sql file under directory (recursive), call run_proposals and
     print/save a timing table prefixed with the SQL file's basename.
 
     Reuses ``discover_sql_files`` for recursive lookup and ``run_proposals`` for
     per-file benchmarking. Differs from ``run_queries`` in that it does NOT
     regenerate explain/stat/proposals — it assumes those artifacts already exist
-    in ``./data/`` (i.e. steps 1–3 have been done previously, e.g. by a prior
-    ``run_queries`` pass).
+    (i.e. steps 1–3 have been done previously, e.g. by a prior ``run_queries``
+    pass). ``proposals_kind`` selects the proposals source and defaults the
+    summary/stat output filenames accordingly (``"_obo"`` suffix).
     """
     directory = Path(directory)
     if not directory.is_dir():
@@ -1519,11 +1571,15 @@ def run_proposals_all(directory: Path, opts: DbOptions, output_path: Path = None
         print(f"[WARNING] No .sql files found under {directory}")
         return
 
-    output_path = Path(output_path) if output_path else DATA_DIR / "run_proposals_all_result.txt"
+    tag = "_obo" if proposals_kind == "obo_proposal" else ""
+
+    output_path = (Path(output_path) if output_path
+                   else output_dir_for(opts.database) / f"run_proposals_all{tag}_result.txt")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_file = open(output_path, "w", encoding="utf-8")
 
-    stat_path = Path(stat_path) if stat_path else DATA_DIR / "run_proposals_all_stat.txt"
+    stat_path = (Path(stat_path) if stat_path
+                 else output_dir_for(opts.database) / f"run_proposals_all{tag}_stat.txt")
 
     logger.info(f"Found {len(sql_files)} SQL file(s) under {directory}")
     logger.info(f"Summary output: {output_path}")
@@ -1533,8 +1589,11 @@ def run_proposals_all(directory: Path, opts: DbOptions, output_path: Path = None
             logger.info(f"--- [{i}/{len(sql_files)}] {sql_path.name} ---")
             try:
                 results = run_proposals(sql_path, opts, output_file=output_file,
-                                        header=sql_path.name)
-                all_results.append({"sql_name": sql_path.name, "results": results})
+                                        header=sql_path.name,
+                                        proposals_kind=proposals_kind)
+                rank_best_id = _load_rank_best_id(sql_path, opts.database, proposals_kind)
+                all_results.append({"sql_name": sql_path.name, "results": results,
+                                    "rank_best_id": rank_best_id})
             except SystemExit:
                 # run_proposals exits on missing/invalid proposals file; surface
                 # the error but keep processing the remaining files.
@@ -1555,7 +1614,25 @@ def cmd_run_proposals_all(args):
     opts = DbOptions(host=args.host, port=args.port, user=args.user,
                       database=args.database, sleep=args.sleep)
     run_proposals_all(Path(args.dir), opts, output_path=args.output,
-                      stat_path=args.stat)
+                      stat_path=args.stat, proposals_kind="proposal")
+
+
+def cmd_run_proposals_obo(args):
+    sql_path = Path(args.sql)
+    if not sql_path.exists():
+        print(f"[ERROR] SQL file not found: {sql_path}", file=sys.stderr)
+        sys.exit(1)
+    opts = DbOptions(host=args.host, port=args.port, user=args.user,
+                     database=args.database, sleep=args.sleep)
+    run_proposals(sql_path, opts, proposals_path=args.proposals,
+                  output_path=args.output, proposals_kind="obo_proposal")
+
+
+def cmd_run_proposals_all_obo(args):
+    opts = DbOptions(host=args.host, port=args.port, user=args.user,
+                      database=args.database, sleep=args.sleep)
+    run_proposals_all(Path(args.dir), opts, output_path=args.output,
+                      stat_path=args.stat, proposals_kind="obo_proposal")
 
 
 def run_test_lero(sql_path: Path, opts: DbOptions) -> dict:
@@ -2074,12 +2151,27 @@ def main():
     p_run_proposals.add_argument("--sleep", type=float, default=3.0,
                                  help="Seconds to sleep between proposals (default: 3.0)")
     p_run_proposals.add_argument("--output", type=str, default=None,
-                                 help="Summary table output file path (default: ./data/run_proposals_result.txt)")
+                                 help="Summary table output file path (default: ./data/output/{db_dir}/run_proposals_{sql_stem}_result.txt)")
     p_run_proposals.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
     p_run_proposals.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
     p_run_proposals.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
     p_run_proposals.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
     p_run_proposals.set_defaults(func=cmd_run_proposals)
+
+    # run_proposals_obo
+    p_run_proposals_obo = subparsers.add_parser("run_proposals_obo", help="Run OBO proposals and benchmark execution time")
+    p_run_proposals_obo.add_argument("--sql", type=str, required=True, help="Path to SQL file")
+    p_run_proposals_obo.add_argument("--proposals", type=str, default=None,
+                                     help="Path to proposals JSON file (default: ./data/obo_proposal/{db_dir}/{sql_stem}_proposals.json)")
+    p_run_proposals_obo.add_argument("--sleep", type=float, default=3.0,
+                                     help="Seconds to sleep between proposals (default: 3.0)")
+    p_run_proposals_obo.add_argument("--output", type=str, default=None,
+                                     help="Summary table output file path (default: ./data/output/{db_dir}/run_proposals_obo_{sql_stem}_result.txt)")
+    p_run_proposals_obo.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
+    p_run_proposals_obo.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
+    p_run_proposals_obo.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
+    p_run_proposals_obo.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
+    p_run_proposals_obo.set_defaults(func=cmd_run_proposals_obo)
 
     # run_one_query
     p_run_one_query = subparsers.add_parser("run_one_query", help="Full pipeline for a single SQL file")
@@ -2116,9 +2208,9 @@ def main():
     )
     p_run_proposals_all.add_argument("--dir", type=str, required=True, help="Directory containing SQL files (recursive)")
     p_run_proposals_all.add_argument("--output", type=str, default=None,
-                                     help="Summary table output file path (default: ./data/run_proposals_all_result.txt)")
+                                     help="Summary table output file path (default: ./data/output/{db_dir}/run_proposals_all_result.txt)")
     p_run_proposals_all.add_argument("--stat", type=str, default=None,
-                                     help="Stat summary table output file path (default: ./data/run_proposals_all_stat.txt)")
+                                     help="Stat summary table output file path (default: ./data/output/{db_dir}/run_proposals_all_stat.txt)")
     p_run_proposals_all.add_argument("--sleep", type=float, default=3.0,
                                      help="Seconds to sleep between SQL files (default: 3.0)")
     p_run_proposals_all.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
@@ -2126,6 +2218,24 @@ def main():
     p_run_proposals_all.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
     p_run_proposals_all.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
     p_run_proposals_all.set_defaults(func=cmd_run_proposals_all)
+
+    # run_proposals_all_obo
+    p_run_proposals_all_obo = subparsers.add_parser(
+        "run_proposals_all_obo",
+        help="Run run_proposals for every SQL file in a directory (recursive); reads data/obo_proposal/{db_dir}/; does NOT regenerate explain/stat/proposals",
+    )
+    p_run_proposals_all_obo.add_argument("--dir", type=str, required=True, help="Directory containing SQL files (recursive)")
+    p_run_proposals_all_obo.add_argument("--output", type=str, default=None,
+                                         help="Summary table output file path (default: ./data/output/{db_dir}/run_proposals_all_obo_result.txt)")
+    p_run_proposals_all_obo.add_argument("--stat", type=str, default=None,
+                                         help="Stat summary table output file path (default: ./data/output/{db_dir}/run_proposals_all_obo_stat.txt)")
+    p_run_proposals_all_obo.add_argument("--sleep", type=float, default=3.0,
+                                         help="Seconds to sleep between SQL files (default: 3.0)")
+    p_run_proposals_all_obo.add_argument("--database", type=str, default=PGDATABASE, help="Database name")
+    p_run_proposals_all_obo.add_argument("--host", type=str, default=PGHOST, help="PostgreSQL host")
+    p_run_proposals_all_obo.add_argument("--port", type=int, default=PGPORT, help="PostgreSQL port")
+    p_run_proposals_all_obo.add_argument("--user", type=str, default=PGUSER, help="PostgreSQL user")
+    p_run_proposals_all_obo.set_defaults(func=cmd_run_proposals_all_obo)
 
     # test_lero
     p_test_lero = subparsers.add_parser(
