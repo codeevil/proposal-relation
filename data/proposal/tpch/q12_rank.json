@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 20,
+  "reason": "该方案综合使用IndexOnlyScan避免回表、HashJoin消除嵌套循环开销、并行扫描加速大表处理，并通过Rows和work_mem优化校正估计与内存使用，实现扫描、连接与并行的全面优化，预期执行耗时最小"
+}
+```

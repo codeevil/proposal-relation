@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 10,
+  "reason": "该方案通过Rows Hint校正行数估计偏差，强制customer为驱动表并使用哈希连接，彻底消除对orders表的150万次嵌套循环扫描，同时禁用orders并行扫描避免资源浪费，扫描路径最优，整体执行耗时最小"
+}
+```

@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 10,
+  "reason": "该方案通过Rows Hint校正store_sales与item连接结果集的严重高估，强制哈希连接消除嵌套循环的指数级扫描开销，结合IndexOnlyScan减少回表IO，并合理设置连接顺序控制中间结果集膨胀，整体执行计划最优"
+}
+```

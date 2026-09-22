@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 4,
+  "reason": "该方案通过Memoize缓存子查询结果，将6351次重复扫描降为1次，并强制IndexOnlyScan减少partsupp全表扫描开销，从根本上消除主查询瓶颈，预期执行耗时最小"
+}
+```

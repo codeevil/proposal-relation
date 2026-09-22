@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 1,
+  "reason": "该方案通过Rows Hint准确校正movie_info_idx与movie_info连接后中间结果集的严重估计偏差（2000倍），并强制以info_type为驱动表、使用哈希连接，彻底消除对movie_info的46万次嵌套循环回表扫描，同时提升大表并行度，实现最优连接顺序与执行路径，预期执行耗时最小"
+}
+```

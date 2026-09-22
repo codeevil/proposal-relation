@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 1,
+  "reason": "该方案通过Rows Hint精准校正customer与customer_demographics连接后的行数估计偏差，强制哈希连接并优化连接顺序，使小结果集驱动大表，有效避免了嵌套循环对store_sales的千万级重复扫描，且结合IndexOnlyScan和并行扫描，整体执行路径最符合数据规模与索引特征，预期执行耗时最小"
+}
+```

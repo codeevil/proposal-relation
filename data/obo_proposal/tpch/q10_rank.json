@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 15,
+  "reason": "该方案通过Leading( (customer (orders (lineitem nation))) )构建最优灌木树连接结构，使nation与lineitem提前聚合，有效控制中间结果集膨胀，结合Rows(orders *0.1)校正行数估计偏差，强制哈希连接并提升并行度，彻底避免大表嵌套循环与磁盘排序，预期执行耗时最小"
+}
+```

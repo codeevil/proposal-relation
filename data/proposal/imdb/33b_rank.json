@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 3,
+  "reason": "该方案将高选择性小表kind_type作为驱动表并提前过滤tv series，显著缩小后续连接基数，避免了对大表movie_link和movie_companies的嵌套循环扫描，中间结果集最小化，预期执行耗时最小"
+}
+```

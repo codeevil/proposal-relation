@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 10,
+  "reason": "该方案通过Rows Hint校正keyword与movie_keyword连接后严重低估的行数估计，强制movie_keyword与movie_info_idx使用哈希连接并启用IndexOnlyScan，有效消除嵌套循环导致的百万级重复扫描，同时并行加速大表过滤，整体执行路径最贴近最优计划"
+}
+```

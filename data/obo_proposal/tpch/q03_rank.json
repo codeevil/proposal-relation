@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 3,
+  "reason": "该方案将小结果集customer作为驱动表并强制哈希连接，避免了对orders大表的嵌套循环扫描，且通过IndexOnlyScan减少回表开销，同时合理校正行数估计，使中间结果集最小化，预期执行耗时最小"
+}
+```

@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 1,
+  "reason": "该方案通过Rows校正movie_keyword表的严重行数低估（40.7倍），并强制以keyword为驱动表、使用哈希连接避免对movie_info_idx的重复扫描，最小化中间结果集，显著降低O(n×m)嵌套循环开销，预期执行耗时最小"
+}
+```

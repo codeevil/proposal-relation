@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 16,
+  "reason": "该方案通过Rows Hint精准修正了movie_link与info_type连接后严重低估的行数估计（实际15007行），强制使用HashJoin替代嵌套循环，结合IndexOnlyScan避免回表IO，并提升并行度，显著降低中间结果集规模与总IO开销，整体执行路径最高效"
+}
+```

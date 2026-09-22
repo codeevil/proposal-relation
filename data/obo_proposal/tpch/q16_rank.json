@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 11,
+  "reason": "该方案通过IndexOnlyScan强制使用idx_part_brand索引扫描part表，避免全表扫描与回表开销，同时禁用partsupp的IndexOnlyScan以防止无效索引扫描，结合Rows Hint修正中间结果集估计，使优化器正确选择小表驱动+哈希连接路径，有效消除嵌套循环对partsupp的重复扫描，预期执行耗时最小"
+}
+```

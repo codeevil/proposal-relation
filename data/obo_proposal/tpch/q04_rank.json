@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 19,
+  "reason": "该方案通过Rows(orders lineitem *0.05)精准校正了优化器对连接后中间结果集的严重高估，强制使用HashJoin并禁用嵌套循环，避免了lineitem表57万次重复扫描，结合并行扫描与合理连接顺序，从根本上消除性能瓶颈，预期执行耗时最小"
+}
+```

@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 10,
+  "reason": "该方案将小表store作为最外层驱动表，合理控制中间结果集膨胀，强制哈希连接避免大表store_returns的千万级嵌套循环扫描，并通过Rows Hint校正d2表行数估计，结合IndexOnlyScan和并行扫描，整体执行路径最优"
+}
+```

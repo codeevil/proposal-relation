@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 20,
+  "reason": "该方案综合运用Rows校正估计偏差、Leading控制最优连接顺序、HashJoin提升大表连接效率、IndexOnlyScan消除回表开销、Parallel加速大表扫描及Set调整代价模型，全链路优化有效避免了中间结果膨胀与低效执行路径，预期执行耗时最小"
+}
+```

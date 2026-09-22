@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 2,
+  "reason": "该方案强制使用覆盖索引的IndexOnlyScan，完全消除回表IO开销，结合Rows Hint校正行数估计偏差，使执行计划最高效，预期执行耗时最小"
+}
+```

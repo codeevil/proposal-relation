@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 20,
+  "reason": "该方案强制s1与customer、s1与date_dim使用哈希连接，避免嵌套循环在大表上产生指数级开销，同时提升store_sales并行度至10和max_parallel_workers_per_gather至8，实现大表扫描与连接的双重并行加速，综合收益最大，预期执行耗时最小"
+}
+```

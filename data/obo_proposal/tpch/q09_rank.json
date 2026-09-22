@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 15,
+  "reason": "该方案通过强制嵌套循环连接小结果集的part与partsupp（利用主键索引高效回表），并强制哈希连接supplier与nation及lineitem与orders，有效避免了大表嵌套循环与Memoize缓存开销，结合合理连接顺序与并行度设置，使中间结果集最小化，预期执行耗时最小"
+}
+```

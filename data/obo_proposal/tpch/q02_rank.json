@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 1,
+  "reason": "该方案通过Leading强制最优连接顺序region→nation→supplier→partsupp→part，优先过滤小表并尽早缩小中间结果集，同时强制HashJoin替代嵌套循环，避免对partsupp大表的千万次重复扫描，并通过Rows Hint校正行数估计偏差，使优化器正确选择高效路径，整体预期执行耗时最小"
+}
+```

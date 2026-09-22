@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 1,
+  "reason": "该方案通过Rows(customer *0.1)准确校正了驱动表行数估计偏差，强制Leading( (customer orders) )和HashJoin(customer orders)避免了对orders表的19万次嵌套循环扫描，同时Parallel(customer 4)充分利用多核加速大表过滤，整体执行路径最优"
+}
+```

@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 9,
+  "reason": "该方案通过Rows(part lineitem *0.0001)精准校正中间结果集估计，强制part为驱动表并使用哈希连接，彻底消除对lineitem的6万余次嵌套循环扫描，同时启用8个并行worker加速大表扫描，预期执行耗时最小"
+}
+```

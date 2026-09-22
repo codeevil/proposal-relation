@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 13,
+  "reason": "该方案通过Rows Hint精准校正keyword与movie_keyword连接后的行数估计偏差，强制哈希连接消除对title表的41840次重复扫描，结合IndexOnlyScan避免回表，且并行加速大表连接，整体控制中间结果集最小，执行路径最优"
+}
+```

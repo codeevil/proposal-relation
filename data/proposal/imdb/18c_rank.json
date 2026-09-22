@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 5,
+  "reason": "该方案通过Rows Hint精准校正了movie_info_idx与info_type(it2)、movie_info与movie_info_idx等关键连接的行数估计偏差，有效避免了优化器因误判而选择嵌套循环连接，从根本上消除性能瓶颈，预期执行耗时最小"
+}
+```

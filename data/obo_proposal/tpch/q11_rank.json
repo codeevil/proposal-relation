@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 17,
+  "reason": "该方案通过IndexOnlyScan避免supplier表回表，结合哈希连接消除大表嵌套循环扫描，提升并行度并精准控制中间结果集，显著降低IO与CPU开销，预期执行耗时最小"
+}
+```

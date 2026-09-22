@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 1,
+  "reason": "该方案以高选择性过滤后的title为驱动表，强制哈希连接movie_keyword与title，有效避免了对大表movie_keyword的嵌套循环扫描，结合Rows Hint校正行数估计，显著控制中间结果集增长，预期执行耗时最小"
+}
+```

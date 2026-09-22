@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 10,
+  "reason": "该方案通过Rows Hint准确校正movie_link与movie_info_idx连接后2517行的实际结果集规模，强制哈希连接替代嵌套循环，避免对movie_info_idx的6万次重复扫描，并采用并行扫描与位图扫描加速大表处理，连接顺序合理控制中间结果膨胀，整体执行路径最优"
+}
+```

@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 6,
+  "reason": "该方案彻底禁用嵌套循环连接，强制使用哈希连接处理supplier-lineitem和lineitem-orders的连接，有效消除因驱动表估计偏差导致的8010次重复扫描，将连接代价从O(n²)降至O(n+m)，显著降低中间结果集膨胀和执行耗时"
+}
+```

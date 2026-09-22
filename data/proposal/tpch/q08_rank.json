@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 1,
+  "reason": "该方案通过Rows Hint校正part表过滤后行数估计偏差，强制哈希连接优化lineitem与orders、supplier与nation的连接顺序，避免大表嵌套循环扫描，结合并行度提升，显著降低中间结果集膨胀与IO开销，预期执行耗时最小"
+}
+```

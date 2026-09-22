@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 18,
+  "reason": "该方案通过Rows(revenue *0.01)精准校正CTE结果集行数估计，强制哈希连接并优化连接顺序为revenue驱动supplier，彻底消除嵌套循环对supplier的重复扫描，同时并行加速lineitem大表扫描并禁用低效索引扫描，实现最优执行路径"
+}
+```

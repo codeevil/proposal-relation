@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 3,
+  "reason": "该方案将仅1行的kind_type、info_type、link_type作为驱动表前置，强制哈希连接movie_link与movie_info_idx，有效控制中间结果集规模，避免早期连接导致的指数级膨胀，且通过合理连接顺序与方法显著降低整体执行耗时"
+}
+```

@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 1,
+  "reason": "该方案通过Leading强制小结果集驱动大表，结合Rows Hint校正关键表行数估计偏差，并强制使用HashJoin避免嵌套循环的指数级开销，显著控制中间结果集膨胀，预期执行耗时最小"
+}
+```

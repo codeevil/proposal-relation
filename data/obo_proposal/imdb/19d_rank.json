@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 3,
+  "reason": "该方案通过精准校正cast_info表行数估计偏差，强制哈希连接消除嵌套循环的O(n²)开销，结合IndexOnlyScan减少回表与Memoize缓存复用char_name查询结果，显著降低中间结果集膨胀与重复扫描，实现最优执行效率"
+}
+```

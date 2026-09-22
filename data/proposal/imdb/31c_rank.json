@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 4,
+  "reason": "该方案强制使用哈希连接替代嵌套循环处理大表movie_companies与movie_info_idx的等值连接，将O(n×m)代价降至O(n+m)，并结合Rows Hint校正严重低估的中间结果集，是本查询最关键的性能跃迁"
+}
+```

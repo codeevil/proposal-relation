@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 15,
+  "reason": "该方案通过精准校正lineitem与supplier连接后的行数估计偏差，强制以nation小结果集为驱动表并采用哈希连接，有效避免了对lineitem和orders的大表嵌套循环扫描，同时提升并行度，显著降低中间结果集膨胀与IO开销，预期执行耗时最小"
+}
+```

@@ -1,0 +1,6 @@
+```json
+{
+  "best_propimal_id": 1,
+  "reason": "该方案强制以小表part为驱动表并使用哈希连接，避免了对lineitem大表的嵌套循环扫描，同时通过Rows Hint校正了lineitem过滤后行数估计偏差，提升part表并行度加速小表驱动扫描，整体中间结果集最小且执行计划最高效"
+}
+```

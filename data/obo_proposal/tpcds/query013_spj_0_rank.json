@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 20,
+  "reason": "该方案通过Rows Hint准确校正store_sales中间结果集的严重低估，强制使用IndexOnlyScan覆盖索引避免回表，结合哈希连接与并行扫描，使执行计划从嵌套循环退化为高效流水线，中间结果集最小化，整体预期执行耗时最小"
+}
+```

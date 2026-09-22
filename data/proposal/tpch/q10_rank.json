@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 1,
+  "reason": "该方案通过Leading强制以小结果集customer为驱动表，结合HashJoin消除嵌套循环对orders大表的高成本扫描，并通过Rows校正行数估计偏差，有效控制中间结果集规模，同时提升lineitem并行度加速大表扫描，整体执行路径最符合PostgreSQL代价模型最优预期"
+}
+```

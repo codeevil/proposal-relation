@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 20,
+  "reason": "该方案综合校正了revenue的行数估计、强制哈希连接、提升lineitem与revenue的并行度，并设置合理work_mem与random_page_cost，全面优化了大表过滤、CTE聚合与连接阶段的性能，最小化中间结果集与IO开销，预期执行耗时最小"
+}
+```

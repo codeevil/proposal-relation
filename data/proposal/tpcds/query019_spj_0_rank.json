@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 12,
+  "reason": "该方案通过禁用嵌套循环连接并强制使用哈希连接，彻底避免了大表store_sales与小表item、customer之间的指数级扫描开销，且未引入不必要或冲突的Hint，执行计划最稳定高效"
+}
+```

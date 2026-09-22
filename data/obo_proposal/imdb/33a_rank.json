@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 17,
+  "reason": "该方案通过Rows Hint校正`movie_link`与`info_type`连接后结果集的严重低估，强制使用MergeJoin复用有序索引避免排序开销，并启用IndexOnlyScan减少回表IO，结合合理的连接顺序控制中间结果膨胀，整体执行路径最接近最优"
+}
+```

@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 1,
+  "reason": "该方案通过合理的连接顺序（region→nation→customer→orders→lineitem→supplier）最小化中间结果集膨胀，强制customer与orders、lineitem与supplier使用哈希连接，彻底消除嵌套循环的指数级开销，并通过Rows(orders *0.1)校正关键表行数估计偏差，使优化器正确选择高效执行路径，同时并行扫描大表加速IO，整体代价模型最优"
+}
+```

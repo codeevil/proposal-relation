@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 14,
+  "reason": "该方案通过Leading明确nation→supplier→lineitem l1→orders的最优连接顺序，强制哈希连接消除嵌套循环的O(n²)代价，并通过Rows修正中间结果集估计，结合并行扫描，显著降低整体执行耗时"
+}
+```

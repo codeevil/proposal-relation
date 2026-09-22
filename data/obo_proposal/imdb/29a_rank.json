@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 14,
+  "reason": "该方案通过Rows Hint准确修正title与movie_keyword连接后414行的严重低估，强制哈希连接避免嵌套循环对大表的重复扫描，并对name和movie_companies启用IndexOnlyScan减少回表开销，整体执行计划最高效"
+}
+```

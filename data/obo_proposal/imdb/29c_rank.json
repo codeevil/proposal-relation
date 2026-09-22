@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 12,
+  "reason": "该方案通过Rows Hint准确校正keyword与movie_keyword连接后414行的真实结果集规模，避免优化器误判导致嵌套循环膨胀；连接顺序以小结果集驱动大表，强制哈希连接消除对cast_info等大表的千万级重复扫描，结合并行扫描与IndexOnlyScan显著降低IO与CPU开销，整体执行路径最优"
+}
+```

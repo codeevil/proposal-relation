@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 20,
+  "reason": "该方案通过BitmapScan减少重复索引扫描、MergeJoin复用索引排序、IndexOnlyScan避免回表IO，并结合Rows校正中间结果集估计，实现了从扫描到连接的全链路最优执行，有效最小化了IO与CPU开销，预期执行耗时最小"
+}
+```

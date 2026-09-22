@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 1,
+  "reason": "该方案通过Rows Hint精确修正customer与household_demographics连接后的严重行数估计偏差（乘以0.137），并强制以高选择性date_dim d1为驱动表、使用哈希连接替代嵌套循环，同时启用IndexOnlyScan和并行扫描，有效控制中间结果集膨胀，整体执行计划最接近PostgreSQL CBO最优路径，预期执行耗时最小"
+}
+```

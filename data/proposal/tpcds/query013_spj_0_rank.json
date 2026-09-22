@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 1,
+  "reason": "该方案通过Leading强制date_dim作为最外层驱动表，优先过滤d_year=2001，有效控制中间结果集规模；结合Rows Hint修正连接后行数估计偏差，避免后续大表嵌套循环扫描；并强制store_sales与household_demographics使用哈希连接，彻底消除嵌套循环性能瓶颈，同时IndexOnlyScan避免回表，整体执行计划最优化，预期执行耗时最小"
+}
+```

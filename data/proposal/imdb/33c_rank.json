@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 4,
+  "reason": "该方案通过Rows Hint精准校正了movie_link与link_type、title与kind_type等关键连接的严重行数估计偏差，强制使用哈希连接避免嵌套循环的指数级开销，显著降低中间结果集规模，是唯一全面修正代价模型偏差并优化连接方法的方案"
+}
+```

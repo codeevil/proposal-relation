@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 20,
+  "reason": "该方案综合使用Rows校正关键连接结果集估计、Leading优化连接顺序、HashJoin避免嵌套循环、Parallel提升并行度，形成全局最优执行计划，最小化中间结果集并最大化并行效率"
+}
+```

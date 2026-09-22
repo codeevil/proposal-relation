@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 20,
+  "reason": "该方案通过精准的Rows Hint校正part与lineitem、orders的中间结果集估计，强制哈希连接替代嵌套循环，避免对lineitem和orders的指数级扫描，同时提升并行度并禁用小表全表扫描，整体执行路径最优"
+}
+```

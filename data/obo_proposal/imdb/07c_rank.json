@@ -1,0 +1,6 @@
+```json
+{
+  "best_proposal_id": 1,
+  "reason": "该方案通过Rows Hint准确校正person_info与info_type连接后严重低估的行数，强制最优连接顺序并使用HashJoin消除嵌套循环对movie_link的千万级扫描，同时启用IndexOnlyScan减少name表回表开销，整体路径最符合CBO最优逻辑，预期执行耗时最小"
+}
+```
