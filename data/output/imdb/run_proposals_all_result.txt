@@ -1,0 +1,494 @@
+
+=== 07c.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     5374.45       1.00x                   ok                                                                      
+1            proposal_1   3910.11       1.37x                   ok                                                                      
+2            proposal_2   5091.82       1.06x                   ok                                                                      
+3            proposal_3   2764.52       1.94x                   ok                                                                      
+4            proposal_4   5092.09       1.06x                   ok                                                                      
+5            proposal_5   4159.53       1.29x                   ok                                                                      
+6            proposal_6   5212.76       1.03x                   ok                                                                      
+7            proposal_7   3470.48       1.55x                   ok                                                                      
+8            proposal_8   3384.02       1.59x                   ok                                                                      
+9            proposal_9   5268.62       1.02x                   ok                                                                      
+10           proposal_10  5206.20       1.03x                   ok                                                                      
+11           proposal_11  5187.90       1.04x                   ok                                                                      
+12           proposal_12  6117.95       0.88x                   ok                                                                      
+13           proposal_13  5144.10       1.04x                   ok                                                                      
+14           proposal_14  5427.13       0.99x                   hint_error  Parallel(cast_info 12 soft) | number of workers = 12 is l...
+15           proposal_15  5388.51       1.00x                   ok                                                                      
+16           proposal_16  3167.82       1.70x                   ok                                                                      
+17           proposal_17  2857.43       1.88x    Yes            hint_error  Parallel(cast_info 10 soft) Parallel(movie_link 10 soft) ...
+18           proposal_18  5401.36       1.00x                   ok                                                                      
+19           proposal_19  4842.14       1.11x                   ok                                                                      
+20           proposal_20  3347.36       1.61x                   hint_error  Parallel(cast_info 12 soft) | number of workers = 12 is l...
+
+
+=== 13d.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     2983.51       1.00x                   ok                                                                      
+1            proposal_1   2791.26       1.07x                   ok                                                                      
+2            proposal_2   2599.98       1.15x                   ok                                                                      
+3            proposal_3   14935.13      0.20x                   ok                                                                      
+4            proposal_4   2791.49       1.07x                   ok                                                                      
+5            proposal_5   1407.63       2.12x                   ok                                                                      
+6            proposal_6   2585.49       1.15x                   hint_error  Conflict scan method hint. Conflict scan method hint. | p...
+7            proposal_7   2979.29       1.00x                   hint_error  Conflict join method hint. | pg_hint_plan: hint syntax er...
+8            proposal_8   6795.62       0.44x                   ok                                                                      
+9            proposal_9   12205.17      0.24x                   ok                                                                      
+10           proposal_10  6378.05       0.47x                   ok                                                                      
+11           proposal_11  2527.05       1.18x                   ok                                                                      
+12           proposal_12  3061.71       0.97x                   ok                                                                      
+13           proposal_13  2661.85       1.12x                   hint_error  Conflict join method hint. | pg_hint_plan: hint syntax er...
+14           proposal_14  1620.42       1.84x                   ok                                                                      
+15           proposal_15  11635.13      0.26x                   hint_error  Conflict join method hint. | pg_hint_plan: hint syntax er...
+16           proposal_16  2837.58       1.05x                   ok                                                                      
+17           proposal_17  3003.15       0.99x                   hint_error  Set(work_mem '128MB') | Conflict scan method hint. Confli...
+18           proposal_18  2628.36       1.14x                   ok                                                                      
+19           proposal_19  2995.65       1.00x                   ok                                                                      
+20           proposal_20  2076.27       1.44x    Yes            ok                                                                      
+
+
+=== 16b.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     timeout       N/A                     timeout     query execution exceeded 60s timeout (killed)               
+1            proposal_1   timeout       N/A      Yes            timeout     query execution exceeded 60s timeout (killed): INFO:  pg_...
+2            proposal_2   timeout       N/A                     timeout     query execution exceeded 60s timeout (killed): NOTICE:  p...
+3            proposal_3   timeout       N/A                     timeout     query execution exceeded 60s timeout (killed): NOTICE:  p...
+4            proposal_4   timeout       N/A                     timeout     query execution exceeded 60s timeout (killed): INFO:  pg_...
+5            proposal_5   timeout       N/A                     timeout     query execution exceeded 60s timeout (killed): NOTICE:  p...
+6            proposal_6   36527.02      N/A                     hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+7            proposal_7   21505.71      N/A                     ok                                                                      
+8            proposal_8   26355.95      N/A                     ok                                                                      
+9            proposal_9   27802.72      N/A                     hint_error  Conflict join method hint. Conflict join method hint. Con...
+10           proposal_10  21963.80      N/A                     ok                                                                      
+11           proposal_11  32640.12      N/A                     ok                                                                      
+12           proposal_12  26822.14      N/A                     ok                                                                      
+13           proposal_13  25650.99      N/A                     hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+14           proposal_14  23327.97      N/A                     ok                                                                      
+15           proposal_15  33261.16      N/A                     ok                                                                      
+16           proposal_16  18089.46      N/A                     ok                                                                      
+17           proposal_17  17409.16      N/A                     ok                                                                      
+18           proposal_18  33384.33      N/A                     ok                                                                      
+19           proposal_19  16792.51      N/A                     ok                                                                      
+20           proposal_20  25990.45      N/A                     ok                                                                      
+
+
+=== 17a.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     14093.29      1.00x                   ok                                                                      
+1            proposal_1   12659.84      1.11x                   ok                                                                      
+2            proposal_2   22939.81      0.61x                   hint_error  Conflict join method hint. | pg_hint_plan: hint syntax er...
+3            proposal_3   16862.37      0.84x                   hint_error  Rows(ci *0.001) | Rows hint requires at least two relatio...
+4            proposal_4   11790.40      1.20x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+5            proposal_5   17790.82      0.79x                   ok                                                                      
+6            proposal_6   17310.48      0.81x                   ok                                                                      
+7            proposal_7   22314.38      0.63x                   hint_error  Conflict join method hint. Conflict join method hint. | p...
+8            proposal_8   22292.80      0.63x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+9            proposal_9   15103.98      0.93x                   ok                                                                      
+10           proposal_10  21252.09      0.66x                   hint_error  Rows(cn *0.01) | Rows hint requires at least two relation...
+11           proposal_11  15745.22      0.90x                   hint_error  Conflict join method hint. | pg_hint_plan: hint syntax er...
+12           proposal_12  18931.26      0.74x                   hint_error  Leading(((keyword movie_keyword) (title movie_companies) ...
+13           proposal_13  18928.43      0.74x                   hint_error  Rows(mc *0.01) | Rows hint requires at least two relation...
+14           proposal_14  21026.05      0.67x                   ok                                                                      
+15           proposal_15  13351.31      1.06x                   ok                                                                      
+16           proposal_16  4476.91       3.15x                   hint_error  Conflict scan method hint. Conflict scan method hint. Con...
+17           proposal_17  21641.41      0.65x                   hint_error  Rows(n *0.005) | Rows hint requires at least two relation...
+18           proposal_18  13347.60      1.06x                   hint_error  Rows(k *1.0) | Rows hint requires at least two relations....
+19           proposal_19  11088.39      1.27x                   ok                                                                      
+20           proposal_20  21559.55      0.65x    Yes            ok                                                                      
+
+
+=== 17e.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     19425.86      1.00x                   ok                                                                      
+1            proposal_1   3506.66       5.54x                   ok                                                                      
+2            proposal_2   14051.92      1.38x                   ok                                                                      
+3            proposal_3   22241.62      0.87x                   hint_error  Closing parenthesis is necessary. | pg_hint_plan: hint sy...
+4            proposal_4   20926.95      0.93x                   hint_error  Conflict join method hint. Conflict join method hint. Con...
+5            proposal_5   6888.61       2.82x                   ok                                                                      
+6            proposal_6   18223.00      1.07x                   ok                                                                      
+7            proposal_7   21590.04      0.90x                   ok                                                                      
+8            proposal_8   21306.30      0.91x                   ok                                                                      
+9            proposal_9   21967.82      0.88x                   ok                                                                      
+10           proposal_10  11842.16      1.64x                   ok                                                                      
+11           proposal_11  5722.14       3.39x                   hint_error  Conflict join method hint. Conflict join method hint. Con...
+12           proposal_12  6460.53       3.01x                   ok                                                                      
+13           proposal_13  18721.34      1.04x                   ok                                                                      
+14           proposal_14  19389.10      1.00x                   ok                                                                      
+15           proposal_15  3905.99       4.97x                   ok                                                                      
+16           proposal_16  13076.67      1.49x                   ok                                                                      
+17           proposal_17  21132.46      0.92x                   ok                                                                      
+18           proposal_18  17134.58      1.13x                   hint_error  Closing parenthesis is necessary. | pg_hint_plan: hint sy...
+19           proposal_19  6515.75       2.98x                   ok                                                                      
+20           proposal_20  14087.03      1.38x    Yes            ok                                                                      
+
+
+=== 17f.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     15200.80      1.00x                   ok                                                                      
+1            proposal_1   4629.51       3.28x                   ok                                                                      
+2            proposal_2   15405.76      0.99x                   ok                                                                      
+3            proposal_3   12787.23      1.19x                   ok                                                                      
+4            proposal_4   33700.15      0.45x                   ok                                                                      
+5            proposal_5   10255.86      1.48x                   ok                                                                      
+6            proposal_6   15637.89      0.97x                   hint_error  Conflict scan method hint. Conflict scan method hint. | p...
+7            proposal_7   14451.76      1.05x                   ok                                                                      
+8            proposal_8   16333.09      0.93x                   hint_error  Conflict scan method hint. Conflict scan method hint. | p...
+9            proposal_9   33080.16      0.46x                   ok                                                                      
+10           proposal_10  15224.60      1.00x                   ok                                                                      
+11           proposal_11  2734.01       5.56x                   ok                                                                      
+12           proposal_12  10376.31      1.46x                   hint_error  Leading((k (mk t) (mc cn) ci n)) | Leading hint requires ...
+13           proposal_13  30743.91      0.49x                   hint_error  Conflict join method hint. Conflict join method hint. | p...
+14           proposal_14  9456.30       1.61x                   ok                                                                      
+15           proposal_15  14767.32      1.03x                   ok                                                                      
+16           proposal_16  14905.94      1.02x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+17           proposal_17  10042.31      1.51x                   ok                                                                      
+18           proposal_18  10205.06      1.49x                   ok                                                                      
+19           proposal_19  4236.53       3.59x                   ok                                                                      
+20           proposal_20  2774.85       5.48x    Yes            ok                                                                      
+
+
+=== 18c.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     5946.40       1.00x                   ok                                                                      
+1            proposal_1   3586.53       1.66x                   hint_error  Rows(movie_info_idx *0.2) | Rows hint requires at least t...
+2            proposal_2   5666.79       1.05x                   hint_error  Conflict scan method hint. Conflict scan method hint. | p...
+3            proposal_3   4353.04       1.37x                   ok                                                                      
+4            proposal_4   5130.51       1.16x                   ok                                                                      
+5            proposal_5   10228.17      0.58x    Yes            ok                                                                      
+6            proposal_6   5107.16       1.16x                   hint_error  Conflict join method hint. Conflict join method hint. Con...
+7            proposal_7   3422.70       1.74x                   ok                                                                      
+8            proposal_8   6382.31       0.93x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+9            proposal_9   4112.69       1.45x                   ok                                                                      
+10           proposal_10  4873.81       1.22x                   ok                                                                      
+11           proposal_11  5873.59       1.01x                   ok                                                                      
+12           proposal_12  6607.33       0.90x                   hint_error  Conflict scan method hint. Conflict scan method hint. | p...
+13           proposal_13  3722.81       1.60x                   ok                                                                      
+14           proposal_14  6521.37       0.91x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+15           proposal_15  timeout       N/A                     timeout     query execution exceeded 60s timeout (killed): NOTICE:  p...
+16           proposal_16  5152.77       1.15x                   ok                                                                      
+17           proposal_17  6343.90       0.94x                   ok                                                                      
+18           proposal_18  timeout       N/A                     timeout     query execution exceeded 60s timeout (killed): NOTICE:  p...
+19           proposal_19  6407.21       0.93x                   ok                                                                      
+20           proposal_20  11837.13      0.50x                   ok                                                                      
+
+
+=== 19d.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     15801.86      1.00x                   ok                                                                      
+1            proposal_1   22247.17      0.71x    Yes            ok                                                                      
+2            proposal_2   16679.81      0.95x                   ok                                                                      
+3            proposal_3   19312.70      0.82x                   ok                                                                      
+4            proposal_4   16498.77      0.96x                   ok                                                                      
+5            proposal_5   5390.32       2.93x                   hint_error  Conflict join method hint. Conflict join method hint. | p...
+6            proposal_6   12414.01      1.27x                   ok                                                                      
+7            proposal_7   18693.92      0.85x                   ok                                                                      
+8            proposal_8   12760.30      1.24x                   ok                                                                      
+9            proposal_9   13298.30      1.19x                   ok                                                                      
+10           proposal_10  12705.55      1.24x                   hint_error  Parallel(cast_info 16 soft) Parallel(title 16 soft) Paral...
+11           proposal_11  12870.32      1.23x                   hint_error  Set(work_mem '256MB') Rows(title *0.2) | Rows hint requir...
+12           proposal_12  22880.46      0.69x                   hint_error  Set(work_mem '128MB') | Conflict join method hint. | pg_h...
+13           proposal_13  18472.29      0.86x                   ok                                                                      
+14           proposal_14  18740.09      0.84x                   ok                                                                      
+15           proposal_15  15682.42      1.01x                   ok                                                                      
+16           proposal_16  16459.28      0.96x                   ok                                                                      
+17           proposal_17  19236.25      0.82x                   ok                                                                      
+18           proposal_18  15969.31      0.99x                   hint_error  Set(work_mem '128MB') | Conflict join method hint. | pg_h...
+19           proposal_19  22560.15      0.70x                   ok                                                                      
+20           proposal_20  12903.79      1.22x                   hint_error  Set(work_mem '256MB') Rows(title *0.2) | Rows hint requir...
+
+
+=== 25c.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     8377.18       1.00x                   ok                                                                      
+1            proposal_1   5845.42       1.43x    Yes            ok                                                                      
+2            proposal_2   10028.14      0.84x                   ok                                                                      
+3            proposal_3   15759.03      0.53x                   ok                                                                      
+4            proposal_4   12810.34      0.65x                   hint_error  Conflict join method hint. Conflict join method hint. | p...
+5            proposal_5   13144.61      0.64x                   ok                                                                      
+6            proposal_6   4420.82       1.89x                   ok                                                                      
+7            proposal_7   8420.99       0.99x                   ok                                                                      
+8            proposal_8   12735.01      0.66x                   ok                                                                      
+9            proposal_9   11104.19      0.75x                   hint_error  Conflict join method hint. Conflict join method hint. Con...
+10           proposal_10  9657.16       0.87x                   ok                                                                      
+11           proposal_11  7266.90       1.15x                   ok                                                                      
+12           proposal_12  10982.69      0.76x                   ok                                                                      
+13           proposal_13  timeout       N/A                     timeout     query execution exceeded 60s timeout (killed): NOTICE:  p...
+14           proposal_14  12511.88      0.67x                   ok                                                                      
+15           proposal_15  11171.74      0.75x                   ok                                                                      
+16           proposal_16  10033.51      0.83x                   ok                                                                      
+17           proposal_17  9741.70       0.86x                   ok                                                                      
+18           proposal_18  13636.22      0.61x                   ok                                                                      
+19           proposal_19  13023.43      0.64x                   ok                                                                      
+20           proposal_20  3648.47       2.30x                   ok                                                                      
+
+
+=== 28a.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     1391.57       1.00x                   ok                                                                      
+1            proposal_1   945.07        1.47x    Yes            hint_error  Rows(movie_keyword *40.7) | Rows hint requires at least t...
+2            proposal_2   1744.75       0.80x                   ok                                                                      
+3            proposal_3   1059.87       1.31x                   ok                                                                      
+4            proposal_4   20260.34      0.07x                   ok                                                                      
+5            proposal_5   1015.72       1.37x                   hint_error  Leading(((k mk) (it1 mi) (t kt) (cc cct1) (mc cn) (mi_idx...
+6            proposal_6   1100.81       1.26x                   ok                                                                      
+7            proposal_7   920.61        1.51x                   ok                                                                      
+8            proposal_8   863.74        1.61x                   ok                                                                      
+9            proposal_9   1677.14       0.83x                   ok                                                                      
+10           proposal_10  1666.00       0.84x                   ok                                                                      
+11           proposal_11  20301.45      0.07x                   ok                                                                      
+12           proposal_12  1515.34       0.92x                   hint_error  Set(work_mem '256MB') Rows(movie_companies *1000) | Rows ...
+13           proposal_13  1472.69       0.94x                   ok                                                                      
+14           proposal_14  951.87        1.46x                   hint_error  Set(work_mem '256MB') | Conflict scan method hint. | pg_h...
+15           proposal_15  1351.36       1.03x                   ok                                                                      
+16           proposal_16  971.63        1.43x                   ok                                                                      
+17           proposal_17  1618.35       0.86x                   hint_error  Leading(((k mk) mi_idx mi t)) Set(work_mem '256MB') | Lea...
+18           proposal_18  1581.76       0.88x                   ok                                                                      
+19           proposal_19  1491.74       0.93x                   ok                                                                      
+20           proposal_20  1409.60       0.99x                   ok                                                                      
+
+
+=== 28b.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     1019.14       1.00x                   ok                                                                      
+1            proposal_1   942.72        1.08x    Yes            ok                                                                      
+2            proposal_2   971.26        1.05x                   hint_error  Conflict scan method hint. Conflict scan method hint. Con...
+3            proposal_3   964.33        1.06x                   ok                                                                      
+4            proposal_4   980.63        1.04x                   hint_error  Rows(movie_keyword *41.2) | Rows hint requires at least t...
+5            proposal_5   619.88        1.64x                   ok                                                                      
+6            proposal_6   1022.76       1.00x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+7            proposal_7   1043.09       0.98x                   ok                                                                      
+8            proposal_8   1061.25       0.96x                   ok                                                                      
+9            proposal_9   1066.78       0.96x                   ok                                                                      
+10           proposal_10  1066.04       0.96x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+11           proposal_11  1054.82       0.97x                   ok                                                                      
+12           proposal_12  977.23        1.04x                   ok                                                                      
+13           proposal_13  809.42        1.26x                   ok                                                                      
+14           proposal_14  566.74        1.80x                   ok                                                                      
+15           proposal_15  917.21        1.11x                   ok                                                                      
+16           proposal_16  1073.75       0.95x                   ok                                                                      
+17           proposal_17  980.50        1.04x                   ok                                                                      
+18           proposal_18  624.67        1.63x                   ok                                                                      
+19           proposal_19  638.52        1.60x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+20           proposal_20  660.10        1.54x                   ok                                                                      
+
+
+=== 28c.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     1999.33       1.00x                   ok                                                                      
+1            proposal_1   1400.44       1.43x                   hint_error  Rows(keyword *0.75) Rows(movie_keyword *40.7) | Rows hint...
+2            proposal_2   1063.38       1.88x                   ok                                                                      
+3            proposal_3   1870.24       1.07x                   ok                                                                      
+4            proposal_4   2218.01       0.90x                   ok                                                                      
+5            proposal_5   2073.54       0.96x                   ok                                                                      
+6            proposal_6   4297.95       0.47x                   ok                                                                      
+7            proposal_7   3264.16       0.61x                   ok                                                                      
+8            proposal_8   1989.49       1.00x                   ok                                                                      
+9            proposal_9   1341.63       1.49x                   ok                                                                      
+10           proposal_10  1877.40       1.06x                   ok                                                                      
+11           proposal_11  1865.63       1.07x                   ok                                                                      
+12           proposal_12  1939.37       1.03x                   ok                                                                      
+13           proposal_13  1137.70       1.76x                   ok                                                                      
+14           proposal_14  1359.36       1.47x                   ok                                                                      
+15           proposal_15  601.65        3.32x                   ok                                                                      
+16           proposal_16  3152.04       0.63x                   ok                                                                      
+17           proposal_17  1331.91       1.50x                   ok                                                                      
+18           proposal_18  2318.03       0.86x                   ok                                                                      
+19           proposal_19  1242.36       1.61x                   ok                                                                      
+20           proposal_20  3751.69       0.53x    Yes            hint_error  Rows(movie_keyword *40.7) | Rows hint requires at least t...
+
+
+=== 29a.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     299.20        1.00x                   ok                                                                      
+1            proposal_1   277.99        1.08x    Yes            hint_error  Rows(mk *0.001) | Rows hint requires at least two relatio...
+2            proposal_2   313.63        0.95x                   hint_error  Rows(mk *0.001) | Rows hint requires at least two relatio...
+3            proposal_3   303.81        0.98x                   hint_error  Rows(mi *0.001) Rows(cc *0.001) | Rows hint requires at l...
+4            proposal_4   294.44        1.02x                   ok                                                                      
+5            proposal_5   324.70        0.92x                   hint_error  Rows(mi *0.001) | Rows hint requires at least two relatio...
+6            proposal_6   302.78        0.99x                   hint_error  HashJoin(chn) Leading(((title mk) (ci mi) (cc mc) (cn n) ...
+7            proposal_7   293.14        1.02x                   hint_error  Rows(cc *0.001) Rows(mc *0.001) Rows(mi *0.001) Rows(mk *...
+8            proposal_8   318.08        0.94x                   ok                                                                      
+9            proposal_9   259.39        1.15x                   hint_error  Conflict join method hint. Conflict join method hint. Con...
+10           proposal_10  291.57        1.03x                   ok                                                                      
+11           proposal_11  323.69        0.92x                   ok                                                                      
+12           proposal_12  193.93        1.54x                   hint_error  Rows(mk *0.001) Rows(ci *0.001) Rows(mi *0.001) Rows(cc *...
+13           proposal_13  290.37        1.03x                   hint_error  Conflict join method hint. Conflict join method hint. Con...
+14           proposal_14  286.89        1.04x                   ok                                                                      
+15           proposal_15  203.89        1.47x                   hint_error  Conflict join method hint. Conflict join method hint. Con...
+16           proposal_16  192.22        1.56x                   ok                                                                      
+17           proposal_17  308.35        0.97x                   ok                                                                      
+18           proposal_18  251.54        1.19x                   hint_error  Rows(mk *0.001) Rows(ci *0.001) Rows(mi *0.001) Rows(cc *...
+19           proposal_19  299.94        1.00x                   hint_error  Conflict join method hint. Conflict join method hint. Con...
+20           proposal_20  307.35        0.97x                   ok                                                                      
+
+
+=== 29b.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     305.06        1.00x                   ok                                                                      
+1            proposal_1   304.30        1.00x    Yes            hint_error  Rows(movie_keyword *414.0) | Rows hint requires at least ...
+2            proposal_2   237.33        1.29x                   ok                                                                      
+3            proposal_3   285.43        1.07x                   hint_error  Rows(ci *38.0) | Rows hint requires at least two relation...
+4            proposal_4   312.10        0.98x                   ok                                                                      
+5            proposal_5   252.83        1.21x                   ok                                                                      
+6            proposal_6   11074.30      0.03x                   hint_error  Set(work_mem '128MB') Rows(mi *1.0) | Rows hint requires ...
+7            proposal_7   197.95        1.54x                   ok                                                                      
+8            proposal_8   248.69        1.23x                   ok                                                                      
+9            proposal_9   1197.22       0.25x                   ok                                                                      
+10           proposal_10  309.24        0.99x                   ok                                                                      
+11           proposal_11  284.28        1.07x                   ok                                                                      
+12           proposal_12  274.15        1.11x                   hint_error  Rows(mc *22.0) | Rows hint requires at least two relation...
+13           proposal_13  301.41        1.01x                   ok                                                                      
+14           proposal_14  266.52        1.14x                   ok                                                                      
+15           proposal_15  270.53        1.13x                   ok                                                                      
+16           proposal_16  196.57        1.55x                   ok                                                                      
+17           proposal_17  1243.10       0.25x                   ok                                                                      
+18           proposal_18  251.85        1.21x                   ok                                                                      
+19           proposal_19  270.82        1.13x                   hint_error  Rows(ci *38.0) | Rows hint requires at least two relation...
+20           proposal_20  1996.25       0.15x                   ok                                                                      
+
+
+=== 29c.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     1482.84       1.00x                   ok                                                                      
+1            proposal_1   2588.28       0.57x                   hint_error  Conflict join method hint. | pg_hint_plan: hint syntax er...
+2            proposal_2   1440.15       1.03x                   ok                                                                      
+3            proposal_3   1447.40       1.02x                   ok                                                                      
+4            proposal_4   2488.48       0.60x                   ok                                                                      
+5            proposal_5   2008.34       0.74x                   ok                                                                      
+6            proposal_6   2177.44       0.68x                   ok                                                                      
+7            proposal_7   345.30        4.29x                   ok                                                                      
+8            proposal_8   1561.05       0.95x                   ok                                                                      
+9            proposal_9   1473.61       1.01x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+10           proposal_10  2512.68       0.59x                   ok                                                                      
+11           proposal_11  2548.86       0.58x                   ok                                                                      
+12           proposal_12  2602.65       0.57x                   ok                                                                      
+13           proposal_13  2790.15       0.53x                   ok                                                                      
+14           proposal_14  2629.34       0.56x                   ok                                                                      
+15           proposal_15  2504.17       0.59x                   ok                                                                      
+16           proposal_16  1457.39       1.02x    Yes            ok                                                                      
+17           proposal_17  2504.60       0.59x                   ok                                                                      
+18           proposal_18  2619.13       0.57x                   hint_error  Parallel(movie_info 12 soft) | number of workers = 12 is ...
+19           proposal_19  651.43        2.28x                   ok                                                                      
+20           proposal_20  1415.78       1.05x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+
+
+=== 31c.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status  Error
+-----------  -----------  ------------  -------  -------------  ------  -----
+0            baseline     787.54        1.00x                   ok           
+1            proposal_1   773.46        1.02x                   ok           
+2            proposal_2   991.46        0.79x                   ok           
+3            proposal_3   1077.67       0.73x                   ok           
+4            proposal_4   866.67        0.91x    Yes            ok           
+5            proposal_5   653.20        1.21x                   ok           
+6            proposal_6   15469.66      0.05x                   ok           
+7            proposal_7   760.55        1.04x                   ok           
+8            proposal_8   1014.27       0.78x                   ok           
+9            proposal_9   579.23        1.36x                   ok           
+10           proposal_10  897.69        0.88x                   ok           
+11           proposal_11  908.21        0.87x                   ok           
+12           proposal_12  1016.26       0.77x                   ok           
+13           proposal_13  1104.52       0.71x                   ok           
+14           proposal_14  14861.51      0.05x                   ok           
+15           proposal_15  913.77        0.86x                   ok           
+16           proposal_16  1106.86       0.71x                   ok           
+17           proposal_17  13960.88      0.06x                   ok           
+18           proposal_18  990.71        0.79x                   ok           
+19           proposal_19  1519.24       0.52x                   ok           
+20           proposal_20  5445.22       0.14x                   ok           
+
+
+=== 33a.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     273.76        1.00x                   ok                                                                      
+1            proposal_1   271.05        1.01x                   hint_error  Leading(((link_type movie_link) (info_type movie_info_idx...
+2            proposal_2   238.98        1.15x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+3            proposal_3   260.54        1.05x    Yes            hint_error  Leading(((kind_type kt1) (info_type it1) (link_type lt) (...
+4            proposal_4   268.78        1.02x                   ok                                                                      
+5            proposal_5   263.34        1.04x                   ok                                                                      
+6            proposal_6   237.35        1.15x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+7            proposal_7   163.76        1.67x                   ok                                                                      
+8            proposal_8   247.86        1.10x                   ok                                                                      
+9            proposal_9   239.56        1.14x                   ok                                                                      
+10           proposal_10  148.61        1.84x                   ok                                                                      
+11           proposal_11  258.81        1.06x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+12           proposal_12  223.57        1.22x                   ok                                                                      
+13           proposal_13  236.26        1.16x                   ok                                                                      
+14           proposal_14  261.23        1.05x                   hint_error  Leading(((kind_type kt1) (info_type it1) (link_type lt) (...
+15           proposal_15  226.77        1.21x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+16           proposal_16  236.98        1.16x                   ok                                                                      
+17           proposal_17  259.55        1.05x                   hint_error  Conflict join method hint. | pg_hint_plan: hint syntax er...
+18           proposal_18  152.53        1.79x                   ok                                                                      
+19           proposal_19  236.33        1.16x                   ok                                                                      
+20           proposal_20  256.27        1.07x                   hint_error  Conflict join method hint. | pg_hint_plan: hint syntax er...
+
+
+=== 33b.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     317.72        1.00x                   ok                                                                      
+1            proposal_1   312.15        1.02x                   ok                                                                      
+2            proposal_2   218.81        1.45x                   ok                                                                      
+3            proposal_3   307.98        1.03x    Yes            ok                                                                      
+4            proposal_4   302.19        1.05x                   hint_error  Rows(movie_companies *0.1) | Rows hint requires at least ...
+5            proposal_5   285.80        1.11x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+6            proposal_6   315.37        1.01x                   ok                                                                      
+7            proposal_7   247.51        1.28x                   ok                                                                      
+8            proposal_8   297.69        1.07x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+9            proposal_9   297.41        1.07x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+10           proposal_10  281.55        1.13x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+11           proposal_11  311.15        1.02x                   ok                                                                      
+12           proposal_12  167.25        1.90x                   ok                                                                      
+13           proposal_13  298.10        1.07x                   hint_error  Conflict scan method hint. | pg_hint_plan: hint syntax er...
+14           proposal_14  182.66        1.74x                   ok                                                                      
+15           proposal_15  281.63        1.13x                   ok                                                                      
+16           proposal_16  313.84        1.01x                   ok                                                                      
+17           proposal_17  202.24        1.57x                   ok                                                                      
+18           proposal_18  291.70        1.09x                   ok                                                                      
+19           proposal_19  311.75        1.02x                   ok                                                                      
+20           proposal_20  264.81        1.20x                   ok                                                                      
+
+
+=== 33c.sql ===
+Proposal ID  Label        Elapsed (ms)  Speedup  AgentRankBest  Status      Error                                                       
+-----------  -----------  ------------  -------  -------------  ----------  ------------------------------------------------------------
+0            baseline     405.10        1.00x                   ok                                                                      
+1            proposal_1   395.88        1.02x                   hint_error  Conflict join method hint. | pg_hint_plan: hint syntax er...
+2            proposal_2   430.31        0.94x                   ok                                                                      
+3            proposal_3   260.48        1.56x                   ok                                                                      
+4            proposal_4   392.74        1.03x    Yes            ok                                                                      
+5            proposal_5   439.41        0.92x                   ok                                                                      
+6            proposal_6   346.93        1.17x                   ok                                                                      
+7            proposal_7   434.27        0.93x                   ok                                                                      
+8            proposal_8   422.91        0.96x                   hint_error  Conflict join method hint. Conflict join method hint. | p...
+9            proposal_9   404.09        1.00x                   ok                                                                      
+10           proposal_10  431.32        0.94x                   ok                                                                      
+11           proposal_11  337.58        1.20x                   ok                                                                      
+12           proposal_12  410.33        0.99x                   hint_error  Leading(((movie_link info_type) (title kind_type) (movie_...
+13           proposal_13  440.54        0.92x                   ok                                                                      
+14           proposal_14  368.47        1.10x                   ok                                                                      
+15           proposal_15  387.67        1.04x                   ok                                                                      
+16           proposal_16  246.58        1.64x                   ok                                                                      
+17           proposal_17  384.02        1.05x                   ok                                                                      
+18           proposal_18  411.34        0.98x                   ok                                                                      
+19           proposal_19  223.33        1.81x                   ok                                                                      
+20           proposal_20  376.99        1.07x                   ok                                                                      
+

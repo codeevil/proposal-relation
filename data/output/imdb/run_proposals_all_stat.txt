@@ -1,0 +1,21 @@
+Query    Baseline(ms)  Best-Proposal  Best(ms)  Speedup-Base  AgentRankBest  Status      Error                                   
+-------  ------------  -------------  --------  ------------  -------------  ----------  ----------------------------------------
+07c.sql  5374.45       proposal_3     2764.52   1.94x         17             ok                                                  
+13d.sql  2983.51       proposal_5     1407.63   2.12x         20             ok                                                  
+16b.sql  N/A           proposal_19    16792.51  N/A           1              ok                                                  
+17a.sql  14093.29      proposal_16    4476.91   3.15x         20             hint_error  Conflict scan method hint. Conflict s...
+17e.sql  19425.86      proposal_1     3506.66   5.54x         20             ok                                                  
+17f.sql  15200.80      proposal_11    2734.01   5.56x         20             ok                                                  
+18c.sql  5946.40       proposal_7     3422.70   1.74x         5              ok                                                  
+19d.sql  15801.86      proposal_5     5390.32   2.93x         1              hint_error  Conflict join method hint. Conflict j...
+25c.sql  8377.18       proposal_20    3648.47   2.30x         1              ok                                                  
+28a.sql  1391.57       proposal_8     863.74    1.61x         1              ok                                                  
+28b.sql  1019.14       proposal_14    566.74    1.80x         1              ok                                                  
+28c.sql  1999.33       proposal_15    601.65    3.32x         20             ok                                                  
+29a.sql  299.20        proposal_16    192.22    1.56x         1              ok                                                  
+29b.sql  305.06        proposal_16    196.57    1.55x         1              ok                                                  
+29c.sql  1482.84       proposal_7     345.30    4.29x         16             ok                                                  
+31c.sql  787.54        proposal_9     579.23    1.36x         4              ok                                                  
+33a.sql  273.76        proposal_10    148.61    1.84x         3              ok                                                  
+33b.sql  317.72        proposal_12    167.25    1.90x         3              ok                                                  
+33c.sql  405.10        proposal_19    223.33    1.81x         4              ok                                                  
