@@ -386,27 +386,27 @@
 
 | Proposal ID | Label | Elapsed (ms) | Speedup | AgentRankBest | Status | Error |
 |---|---|---|---|---|---|---|
-| 0 | baseline | timeout | N/A |  | timeout | query execution exceeded 60s timeout (killed) |
-| 1 | proposal_1 | timeout | N/A | Yes | timeout | query execution exceeded 60s timeout (killed): INFO:  pg_... |
-| 2 | proposal_2 | timeout | N/A |  | timeout | query execution exceeded 60s timeout (killed): NOTICE:  p... |
-| 3 | proposal_3 | timeout | N/A |  | timeout | query execution exceeded 60s timeout (killed): NOTICE:  p... |
-| 4 | proposal_4 | timeout | N/A |  | timeout | query execution exceeded 60s timeout (killed): INFO:  pg_... |
-| 5 | proposal_5 | timeout | N/A |  | timeout | query execution exceeded 60s timeout (killed): NOTICE:  p... |
-| 6 | proposal_6 | 36527.02 | N/A |  | hint_error | Conflict scan method hint. \| pg_hint_plan: hint syntax er... |
-| 7 | proposal_7 | 21505.71 | N/A |  | ok |  |
-| 8 | proposal_8 | 26355.95 | N/A |  | ok |  |
-| 9 | proposal_9 | 27802.72 | N/A |  | hint_error | Conflict join method hint. Conflict join method hint. Con... |
-| 10 | proposal_10 | 21963.80 | N/A |  | ok |  |
-| 11 | proposal_11 | 32640.12 | N/A |  | ok |  |
-| 12 | proposal_12 | 26822.14 | N/A |  | ok |  |
-| 13 | proposal_13 | 25650.99 | N/A |  | hint_error | Conflict scan method hint. \| pg_hint_plan: hint syntax er... |
-| 14 | proposal_14 | 23327.97 | N/A |  | ok |  |
-| 15 | proposal_15 | 33261.16 | N/A |  | ok |  |
-| 16 | proposal_16 | 18089.46 | N/A |  | ok |  |
-| 17 | proposal_17 | 17409.16 | N/A |  | ok |  |
-| 18 | proposal_18 | 33384.33 | N/A |  | ok |  |
-| 19 | proposal_19 | 16792.51 | N/A |  | ok |  |
-| 20 | proposal_20 | 25990.45 | N/A |  | ok |  |
+| 0 | baseline | 23580.36 | 1.00x |  | ok |  |
+| 1 | proposal_1 | 24314.86 | 0.97x | Yes | hint_error | Rows(movie_keyword *664.1) \| Rows hint requires at least ... |
+| 2 | proposal_2 | 18006.54 | 1.31x |  | ok |  |
+| 3 | proposal_3 | 29918.93 | 0.79x |  | ok |  |
+| 4 | proposal_4 | 28864.73 | 0.82x |  | hint_error | Conflict join method hint. Conflict join method hint. \| p... |
+| 5 | proposal_5 | 22211.41 | 1.06x |  | ok |  |
+| 6 | proposal_6 | 22849.52 | 1.03x |  | hint_error | Conflict scan method hint. \| pg_hint_plan: hint syntax er... |
+| 7 | proposal_7 | 19200.93 | 1.23x |  | ok |  |
+| 8 | proposal_8 | 28697.00 | 0.82x |  | ok |  |
+| 9 | proposal_9 | 18418.43 | 1.28x |  | hint_error | Conflict join method hint. Conflict join method hint. Con... |
+| 10 | proposal_10 | 19370.92 | 1.22x |  | ok |  |
+| 11 | proposal_11 | 20835.55 | 1.13x |  | ok |  |
+| 12 | proposal_12 | 28168.25 | 0.84x |  | ok |  |
+| 13 | proposal_13 | 28771.65 | 0.82x |  | hint_error | Conflict scan method hint. \| pg_hint_plan: hint syntax er... |
+| 14 | proposal_14 | 17001.63 | 1.39x |  | ok |  |
+| 15 | proposal_15 | 16451.54 | 1.43x |  | ok |  |
+| 16 | proposal_16 | 29216.89 | 0.81x |  | ok |  |
+| 17 | proposal_17 | 17056.70 | 1.38x |  | ok |  |
+| 18 | proposal_18 | 18581.59 | 1.27x |  | ok |  |
+| 19 | proposal_19 | 28922.14 | 0.82x |  | ok |  |
+| 20 | proposal_20 | 18343.30 | 1.29x |  | ok |  |
 
 
 ### 17a.sql
